@@ -1,0 +1,100 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Python: train.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--data","coco128.yaml",
+                "--weights","./models_files/yolov3-tiny.pt",
+                "--batch-size","4",
+                "--epochs","2"  
+                // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
+                // "--weights","./models_files/yolov3-tiny.pt",
+                // "--device","0"
+               
+            ]
+        },
+
+        {
+            "name": "Python: val.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--data","data/coco128.yaml",
+                "--weights","./models_files/yolov3-tiny.pt",
+                // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
+                // "--weights","./models_files/yolov3-tiny.pt",
+                // "--device","0"
+               
+            ]
+        },
+
+        {
+            "name": "Python: test.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--data","data/coco128.yaml",
+                "--weights","./models_files/yolov3-tiny.pt",
+                // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
+                // "--weights","./models_files/yolov3-tiny.pt",
+                // "--device","0"
+            ]
+        },
+        {
+            "name": "Python: detect.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--source","data/images/zidane.jpg",
+                "--weights","./models_files/yolov3tiny_facemask.pt",
+                // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
+                // "--weights","models_files/voc_retrain/best.pt",
+                "--view-img"
+                // "--device","0"
+            ]
+        },
+        {
+            "name": "Python: quant_test.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/quant_test.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--model_name","coco128_retrain",
+                "--data","./data/coco128.yaml"
+
+            ]
+        },
+        {
+            "name": "Python: quant_detect.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/quant_detect.py",
+            "console": "integratedTerminal",
+            "args": [
+                // "--model_name","coco128_retrain",
+                // "--data","./data/coco128.yaml"
+
+            ]
+        }
+    ]
+}

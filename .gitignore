@@ -1,0 +1,6 @@
+*.pt
+*.pth
+*.bin
+runs/
+infer_bin/
+models_files/
