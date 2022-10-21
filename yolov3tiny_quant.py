@@ -56,7 +56,7 @@ def load_model_data(data,weights,imgsz,rect):
     dataloader_iter=iter(dataloader)
     return model,dataloader_iter
 
-def generate_quant_model(model,dataloader_iter,quant_model_name):
+def generate_quant_model_baseline(model,dataloader_iter,quant_model_name):
     quant = torch.quantization.QuantStub()
     dequant = torch.quantization.DeQuantStub()
     quant_model=nn.Sequential(quant,model,dequant)
@@ -89,7 +89,7 @@ def load_quant_model(float_model_name,quant_model_name):
     quant_model=quant_model.to('cpu')
     return quant_model
 
-def quant_model_detect(x,quant_model):
+def quant_model_detect_v3t1ancher(x,quant_model):
     x=quant_model[0](x)
     for ii in range(11):
         print(ii,quant_model[1].model[ii])
@@ -110,7 +110,7 @@ def quant_model_evaluate_show(data,quant_model):
 
     img=data[0]
     x=(img.float()/255.0)
-    res=quant_model_detect(x,quant_model)
+    res=quant_model_detect_v3t1ancher(x,quant_model)
     pred_reduce=torch.dequantize(res)
     
     bs, _, ny, nx = pred_reduce.shape  # x(bs,255,20,20) to x(bs,3,20,20,85)

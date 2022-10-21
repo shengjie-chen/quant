@@ -41,7 +41,7 @@ import math
 from scipy import signal
 # from yolov3tiny_quant import quant_model_evaluate_show
 
-def quant_model_detect(x,quant_model):
+def quant_model_detect_v3t1ancher(x,quant_model):
     x=quant_model[0](x)
     for ii in range(11):
         print(ii,quant_model[1].model[ii])
@@ -90,7 +90,7 @@ def quant_model_evaluate_show(data,quant_model):
     # x=(img.float()/255.0)
     x = data
 
-    res=quant_model_detect(x,quant_model)
+    res=quant_model_detect_v3t1ancher(x,quant_model)
     pred_reduce=torch.dequantize(res)
     
     bs, _, ny, nx = pred_reduce.shape  # x(bs,255,20,20) to x(bs,3,20,20,85)

@@ -40,6 +40,19 @@ from collections import OrderedDict
 import math
 from scipy import signal
 
+per_channel_qconfig_1 = torch.quantization.QConfig(
+        activation=torch.quantization.default_histogram_observer,
+        weight=torch.quantization.default_per_channel_weight_observer)
+per_channel_qconfig_2 = torch.quantization.QConfig(
+        activation=torch.quantization.HistogramObserver.with_args(reduce_range=False),
+        weight=torch.quantization.default_per_channel_weight_observer)
+per_channel_qconfig_3 = torch.quantization.QConfig(
+        activation=torch.quantization.default_histogram_observer,
+        weight=torch.quantization.PerChannelMinMaxObserver.with_args(
+    dtype=torch.qint8, qscheme=torch.per_channel_affine))
+per_channel_qconfig_4 = torch.quantization.QConfig(
+        activation=torch.quantization.HistogramObserver.with_args(quant_min=0, quant_max=191),
+        weight=torch.quantization.default_per_channel_weight_observer)
 
 def load_model_data(data, weights, imgsz, rect):
     # data='kaggle-facemask.yaml'
@@ -59,23 +72,75 @@ def load_model_data(data, weights, imgsz, rect):
     return model, dataloader_iter
 
 
-def generate_quant_model(model, dataloader_iter, quant_model_name):
+# def generate_quant_model_baseline(model, dataloader_iter, quant_model_name):
+#     quant = torch.quantization.QuantStub()
+#     dequant = torch.quantization.DeQuantStub()
+#     quant_model = nn.Sequential(quant, model, dequant)
+#     quant_model = quant_model.to('cpu')
+#     quant_model.qconfig = torch.quantization.default_qconfig
+#     quant_model = torch.quantization.prepare(quant_model, inplace=True)
+#     with torch.no_grad():
+#         for t in range(100):
+#             print('-', end='')
+#             data = next(dataloader_iter)
+#             img = data[0]
+#             x = img.float()/255.0
+#             x = quant_model(x)
+#     quant_model = torch.quantization.convert(quant_model, inplace=True)
+#     torch.save(quant_model.state_dict(), quant_model_name)
+
+def generate_quant_model_baseline(model, dataloader_iter, cal_num=100):
+    """指定量化策略来产生一个量化模型,使用default_qconfig量化策略作为baseline"""
     quant = torch.quantization.QuantStub()
     dequant = torch.quantization.DeQuantStub()
     quant_model = nn.Sequential(quant, model, dequant)
     quant_model = quant_model.to('cpu')
     quant_model.qconfig = torch.quantization.default_qconfig
-    quant_model = torch.quantization.prepare(quant_model, inplace=True)
+    print("\t",end='')
+    print(quant_model.qconfig)
+    quant_model = torch.quantization.prepare(quant_model, inplace=False)
     with torch.no_grad():
-        for t in range(100):
-            print('-', end='')
-            data = next(dataloader_iter)
-            img = data[0]
-            x = img.float()/255.0
-            x = quant_model(x)
-    quant_model = torch.quantization.convert(quant_model, inplace=True)
-    torch.save(quant_model.state_dict(), quant_model_name)
+        for i, (path, img, im0s, vid_cap) in enumerate(dataloader_iter):
+            if i == cal_num-1:
+                break
+            img = torch.from_numpy(img).to('cpu')
+            img = img.float()  # uint8 to fp16/32
+            img /= 255.0  # 0 - 255 to 0.0 - 1.0
+            if img.ndimension() == 3:
+                img = img.unsqueeze(0)
+            quant_model(img)
+    quant_model = torch.quantization.convert(quant_model, inplace=False)
+    return quant_model
 
+
+
+def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=100):
+    """指定量化策略来产生一个量化模型,使用自定义的量化策略"""
+    quant = torch.quantization.QuantStub()
+    dequant = torch.quantization.DeQuantStub()
+    quant_model = nn.Sequential(quant, model, dequant)
+    quant_model = quant_model.to('cpu')
+    # quant_model.qconfig = torch.quantization.default_per_channel_qconfig
+    # quant_model.qconfig = torch.quantization.default_qconfig
+    # my_qconfig = torch.quantization.QConfig(activation=torch.quantization.MinMaxObserver.with_args(dtype=torch.qint8),
+    #   weight=torch.quantization.default_observer.with_args(dtype=torch.qint8))
+
+    quant_model.qconfig = per_channel_qconfig_4
+    print("\t",end='')
+    print(quant_model.qconfig)
+    quant_model = torch.quantization.prepare(quant_model, inplace=False)
+    with torch.no_grad():
+        for i, (path, img, im0s, vid_cap) in enumerate(dataloader_iter):
+            if i == cal_num-1:
+                break
+            img = torch.from_numpy(img).to('cpu')
+            img = img.float()  # uint8 to fp16/32
+            img /= 255.0  # 0 - 255 to 0.0 - 1.0
+            if img.ndimension() == 3:
+                img = img.unsqueeze(0)
+            quant_model(img)
+    quant_model = torch.quantization.convert(quant_model, inplace=False)
+    return quant_model
 
 def load_quant_model(float_model_name, quant_model_name):
     model = attempt_load(float_model_name, map_location='cpu',inplace=False)
@@ -93,35 +158,99 @@ def load_quant_model(float_model_name, quant_model_name):
     quant_model = quant_model.to('cpu')
     return quant_model
 
+def quant_zeropad2d(x):
+    """
+    实现ZeroPad2d(padding=[0, 1, 0, 1], value=0.0),
+    输入的tensor.size()为：[bs,channel,h,w]
+    """
+    x_scale = x.q_scale()
+    x_zq = x.q_zero_point()
+    x_type = x.dtype
+    x = x.dequantize()
+    bs = x.shape[0]
+    ch = x.shape[1] 
+    h = x.shape[2]
+    # print(x)
+    p = torch.zeros(bs*ch*h)
+    p = p.reshape(bs,ch,h,1)
+    x = torch.cat((x,p),3)
+    w = x.shape[3]
+    p = torch.zeros(bs*ch*w)
+    p = p.reshape(bs,ch,1,w)
+    x = torch.cat((x,p),2)
+    x = torch.quantize_per_tensor(x, scale = x_scale, zero_point = x_zq, dtype=x_type)
+    return x
 
-def quant_model_detect(x, quant_model):
-    """使用量化模型进行推理检测,但是只使用一个anchor"""
+def quant_cat(x,y):
+    """
+    实现cat(),将两个量化的tensor在channel方向上拼接，量化权重使用第一个的
+    输入的tensor.size()为：[bs,channel,h,w]
+    """
+    x_scale = x.q_scale()
+    x_zq = x.q_zero_point()
+    x_type = x.dtype
+    # y_scale = y.q_scale()
+    # y_zq = y.q_zero_point()
+    # y_type = y.dtype
+    x = x.dequantize()
+    y = y.dequantize()
+    assert(x.shape[0] == y.shape[0])
+    assert(x.shape[2] == y.shape[2])
+    assert(x.shape[3] == y.shape[3])
+    # bs = x.shape[0]
+    # ch = x.shape[1] 
+    # h = x.shape[2]
+    # w = x.shape[3]
+    x = torch.cat((x,y),1)
+    x = torch.quantize_per_tensor(x, scale = x_scale, zero_point = x_zq, dtype=x_type)
+    return x
+
+def quant_model_detect_v3t1ancher(x, quant_model):
+    """针对yolov3-tiny,使用量化模型进行推理检测,但是只使用一个anchor"""
     x = quant_model[0](x)
     for ii in range(11):
         x = quant_model[1].model[ii](x)
+    x = quant_zeropad2d(x)
     for ii in range(12, 16):
         x = quant_model[1].model[ii](x)
     x = quant_model[1].model[-1].m[1](x)
     return x
 
-def quant_model_detect_all(x, quant_model):
-    """使用量化模型进行推理检测,使用全部anchor"""
+def quant_model_detect_v3tall(x, quant_model):
+    """针对yolov3-tiny,使用量化模型进行推理检测,使用全部anchor"""
+    # x = quant_model(x)
+    # print(quant_model)
+
     x = quant_model[0](x)
-    for ii in range(11):
+# route 1
+    for ii in range(9):
         x = quant_model[1].model[ii](x)
-    for ii in range(11):
+    x2 = x
+    for ii in range(9, 11):
         x = quant_model[1].model[ii](x)
-    for ii in range(12, 16):
+    x = quant_zeropad2d(x)
+    for ii in range(12, 15):
         x = quant_model[1].model[ii](x)
-    x = quant_model[1].model[-1].m[1](x)
-    return x
+    x3 = x
+    x = quant_model[1].model[15](x)
+    x1 = quant_model[1].model[-1].m[1](x)
+# route 2
+    x3 = quant_model[1].model[16](x3)
+    x3 = quant_model[1].model[17](x3)
+    # print("before cat:\n\tx3.scale:%f\tx3.zeropoint:%f\n\tx2.scale:%f\tx2.zeropoint:%f"%(x3.q_scale(),x3.q_zero_point(),x2.q_scale(),x2.q_zero_point()))
+    x3 = quant_model[1].model[18]([x3,x2])
+    # x3 = quant_cat(x3,x2)
+    # print("after cat:\n\tx3.scale:%f\tx3.zeropoint:%f"%(x3.q_scale(),x3.q_zero_point()))
+    x3 = quant_model[1].model[19](x3)
+    x2 = quant_model[1].model[-1].m[0](x3)
+    return [x2,x1]
 
 # def quant_inference_batch(x,quant_model):
 #     """使用量化模型对一个batchsize的图片进行推理"""
 #     bs = x.size()[0]
 #     y = []
 #     for i in range(bs):
-#         m = quant_model_detect(x[i], quant_model)
+#         m = quant_model_detect_v3t1ancher(x[i], quant_model)
 #         y.append(torch.dequantize(m))
 #     z = torch.tensor(y)
 #     return z
@@ -203,7 +332,7 @@ def quant_model_evaluate_show_name(data, quant_model, im0s, names):
     while(height > 1000 or width > 1500):
         height = int(height / 2)
         width = int(width / 2)
-    res = quant_model_detect(x, quant_model)
+    res = quant_model_detect_v3t1ancher(x, quant_model)
     pred_reduce = torch.dequantize(res)
 
     bs, _, ny, nx = pred_reduce.shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
@@ -252,7 +381,7 @@ def quant_model_evaluate_show(data, quant_model):
     # x=(img.float()/255.0)
     x = data
 
-    res = quant_model_detect(x, quant_model)
+    res = quant_model_detect_v3t1ancher(x, quant_model)
     pred_reduce = torch.dequantize(res)
 
     bs, _, ny, nx = pred_reduce.shape  # x(bs,255,20,20) to x(bs,3,20,20,85)

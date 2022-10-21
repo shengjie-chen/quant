@@ -41,7 +41,8 @@ import math
 from scipy import signal
 # from yolov3tiny_quant import quant_model_evaluate_show
 from quant_utils import load_model_data, quant_model_evaluate_show_name, print_size_of_model,\
-    load_quant_model, statistics_per_img, load_float_model, quant_model_detect, _make_grid
+    load_quant_model, statistics_per_img, load_float_model, quant_model_detect_v3t1ancher, _make_grid, \
+    generate_quant_model_baseline, generate_quant_model_selfdefine,quant_model_detect_v3tall
 import warnings
 
 
@@ -54,10 +55,31 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=32,
                         help='size of each image batch')
 
-    # parser.add_argument('--weights', nargs='+', type=str,
-    #                     default='yolov3.pt', help='model.pt path(s)')
+    parser.add_argument('--task', type=str,
+                        default='test', help='train, val or test')
 
+    parser.add_argument('--one_anchor', action='store_true',
+                        help='default means use all two anchor, and add the flag means use one anchor.')
+
+    parser.add_argument('--recon_qmodel', action='store_true',
+                        help='default means load quant model,and add the flag means reconstruct quant model.')
+    parser.add_argument('--cs_self_def', action='store_true',
+                        help='calibration source:a folder including some source imgs to feed quantization model defined manually')
+    parser.add_argument('--cs_dir', type=str, default='E:/Academic_study/datasets/coco128/images/train2017',
+                        help='if cs_self_def is true, use cs_dir as calibration source')
+    parser.add_argument('--cs_use_set', type=str, default='val',
+                        help='if cs_self_def is false, use dataset as calibration source, you can choose in val and train')
+    parser.add_argument('--cs_num', type=int, default=128,
+                        help='limit img number of calibration source')
+
+    parser.add_argument('--quant_strategy', type=str, default='baseline',
+                        help='choose quant strategy in baseline/selfdefine...')
+    parser.add_argument('--save_qw', action='store_true',
+                         help='save quanted weight')
     opt = parser.parse_args()
+    # if('recon_qmodel' in vars(opt)):
+    #     if('cs_self_def' in vars(opt)):
+    #         if('')
     # opt.save_json |= opt.data.endswith('coco.yaml')
     # opt.data = check_file(opt.data)  # check file
     print(opt, type(opt))
@@ -69,10 +91,41 @@ if __name__ == '__main__':
     float_weight = relative_path + '/weights/best.pt'
     quant_weight = relative_path + '/yolov3tiny_quant.pth'
 
-    # load model
     assert(os.path.exists(float_weight))
     assert(os.path.exists(quant_weight))
-    quant_model = load_quant_model(float_weight, quant_weight)
+    print("->使用现有浮点权重：\n\t"+str(float_weight))
+    if(opt.recon_qmodel):
+        # 准备校准数据
+        if opt.cs_self_def:
+            perpare_source = opt.cs_dir
+        else:
+            dataset_yaml = 'data/' + model_name.split('_')[0]+'.yaml'
+            with open(dataset_yaml) as f:
+                data_yaml = yaml.safe_load(f)
+            perpare_source = data_yaml[opt.cs_use_set]
+        print("->重构量化权重：\n\t使用校准数据："+str(perpare_source) +
+              "\n\t图片数量："+str(opt.cs_num))
+        calibrate_dataset = LoadImages(perpare_source, img_size=416, stride=32)
+        float_model = load_float_model(float_weight)
+        
+        if(opt.quant_strategy == 'baseline'):
+            print("->baseline量化策略：")
+            quant_model = generate_quant_model_baseline(
+                float_model, calibrate_dataset, opt.cs_num)
+        else:
+            print("->selfdefine量化策略：")
+            quant_model = generate_quant_model_selfdefine(
+                float_model, calibrate_dataset, opt.cs_num)
+    else:
+        # load model only in default_qconfig strategy
+        quant_model = load_quant_model(float_weight, quant_weight)
+        print("加载现有量化权重："+str(quant_weight))
+
+        # 保存量化模型
+    if opt.save_qw:
+        state_dict = quant_model.state_dict()
+        torch.save(state_dict, './models_files/' +
+                   model_name + '/yolov3tiny_quant.pth')
 
     # Configure
     data_yaml = opt.data
@@ -94,13 +147,13 @@ if __name__ == '__main__':
     batch_size = opt.batch_size
     device = 'cpu'
     na = quant_model[1].model[-1].na
-    nl = quant_model[1].model[-1].nl
+    nd = 1 if opt.one_anchor else quant_model[1].model[-1].nl # number of detection layers
     no = quant_model[1].model[-1].no
     stride = quant_model[1].model[-1].stride
     anchor = quant_model[1].model[-1].anchors
     anchor_grid = quant_model[1].model[-1].anchor_grid
 
-    task = 'val'
+    task = opt.task
     dataloader = create_dataloader(data_cfg[task], imgsz, batch_size, gs, opt, pad=0.5, rect=True,
                                    prefix=colorstr(f'{task}: '))[0]
     best_acc, old_file = 0, None
@@ -122,27 +175,37 @@ if __name__ == '__main__':
         data = data.float()  # uint8 to fp16/32
         data /= 255.0  # 0 - 255 to 0.0 - 1.0
         nb, _, height, width = data.shape  # batch size, channels, height, width
+        z = []  # inference output
         with torch.no_grad():
             # pred_reduce = quant_inference_batch(data, quant_model)
-            res = quant_model_detect(data, quant_model)
-            pred_reduce = torch.dequantize(res)
-
+            # pred_reduce = quant_model_detect_v3t1ancher(data, quant_model)
+            if(opt.one_anchor):
+                res = []
+                res.append(quant_model_detect_v3t1ancher(data, quant_model))
+            else:
+                res = quant_model_detect_v3tall(data, quant_model) # error
+            
+            # Detect/yolo
             # x(bs,255,20,20) to x(bs,3,20,20,85)
-            bs, _, ny, nx = pred_reduce.shape
-            y = pred_reduce.view(bs, na, no, ny, nx).permute(
-                0, 1, 3, 4, 2).contiguous()
+            for i in range(nd):
+                pred_reduce = torch.dequantize(res[i])
+                bs, _, ny, nx = pred_reduce.shape
+                y = pred_reduce.view(bs, na, no, ny, nx).permute(
+                    0, 1, 3, 4, 2).contiguous()
 
-            y = y.sigmoid()
-            grid = quant_model[1].model[-1]._make_grid(nx, ny)
-            y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + grid) * stride[1]  # xy
-            y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * anchor_grid[1]  # wh
-            y = y.view(bs, -1, no)
+                y = y.sigmoid()
+                grid = quant_model[1].model[-1]._make_grid(nx, ny)
+                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + grid) * stride[i]  # xy
+                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * anchor_grid[i]  # wh
+                # y = y.view(bs, -1, no)
             # print(y)
+                z.append(y.view(bs, -1, no))
 
-            target[:, 2:] *= torch.Tensor([width,height, width, height])
+            z = torch.cat(z,1)
+            target[:, 2:] *= torch.Tensor([width, height, width, height])
             lb = []  # for autolabelling
             y_nms = non_max_suppression(
-                y,conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=False, max_det=1000)
+                z, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=False, max_det=1000)
 
             # Statistics per image
             # stats=statistics_per_img(out=y_nms, targets=target, paths=paths,

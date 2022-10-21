@@ -45,15 +45,18 @@
             "name": "Python: test.py",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "test.py",
             "console": "integratedTerminal",
             "args": [
                 "--img","416",
-                "--data","data/coco128.yaml",
+                "--data",
+                "data/coco.yaml",
+                // "data/coco128.yaml",
                 "--weights","./models_files/yolov3-tiny.pt",
                 // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
                 // "--weights","./models_files/yolov3-tiny.pt",
                 // "--device","0"
+                // "--task","test"
             ]
         },
         {
@@ -79,9 +82,15 @@
             "program": "${workspaceFolder}/quant_test.py",
             "console": "integratedTerminal",
             "args": [
-                "--model_name","coco128_retrain",
-                "--data","./data/coco128.yaml"
-
+                // "--model_name","coco128_retrain",
+                // "--data","./data/coco128.yaml",
+                // "--task","val",
+                "--recon_qmodel",
+                // "--cs_self_def",
+                "--cs_num", "1000",
+                "--cs_use_set", "val",
+                "--quant_strategy", "selfdefine",
+                // "--one_anchor"
             ]
         },
         {
@@ -93,6 +102,10 @@
             "args": [
                 // "--model_name","coco128_retrain",
                 // "--data","./data/coco128.yaml"
+
+                "--source", "data/images",
+                "--cs_num", "20",
+
 
             ]
         }

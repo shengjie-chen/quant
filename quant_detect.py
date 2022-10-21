@@ -40,23 +40,27 @@ from collections import OrderedDict
 import math
 from scipy import signal
 # from yolov3tiny_quant import quant_model_evaluate_show
-from quant_utils import load_model_data, quant_model_evaluate_show_name, print_size_of_model
+
+from quant_utils import load_model_data, quant_model_evaluate_show_name, print_size_of_model, \
+    generate_quant_model_baseline,load_float_model
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', type=str, default='voc_retrain',
                         help='which model? choose in voc_retrain | coco_origin | coco128_retrain ')
-    parser.add_argument('--ps_self_def', type=bool, default=False,
-                        help='prepare source:a folder including some source imgs to feed quantization model defined manually')
-    parser.add_argument('--ps_use_set', type=str, default='val',
-                        help='if ps_self_def is false, use dataset as prepare source, you can choose in val and train')
-    parser.add_argument('--ps_num', type=int, default=20,
-                        help='limit number of prepare source')
+
+    parser.add_argument('--cs_self_def', type=bool, default=False,
+                        help='calibration source:a folder including some source imgs to feed quantization model defined manually')
+    parser.add_argument('--cs_use_set', type=str, default='val',
+                        help='if cs_self_def is false, use dataset as calibration source, you can choose in val and train')
+    parser.add_argument('--cs_num', type=int, default=128,
+                        help='limit img number of calibration source')
+
     parser.add_argument('--source', type=str, default='data/images/zidane.jpg',
                         help='a folder of image to detect in quantization model')
-    parser.add_argument('--save_qw', type=bool,
-                        default=True, help='save quanted weight')
+    parser.add_argument('--save_qw', action='store_true',
+                        help='save quanted weight')
 
     opt = parser.parse_args()
     print(opt)
@@ -66,51 +70,53 @@ if __name__ == '__main__':
     data = 'models/yolov3-tiny_voc.yaml' if model_name == 'voc_retrain' else 'models/yolov3-tiny.yaml'
     float_weight = 'models_files/' + model_name + '/weights/best.pt'
     if os.path.exists(float_weight):
-        float_model, dataloader_iter = load_model_data(
-            data, float_weight, 416, False)
+        # float_model, dataloader_iter = load_model_data(
+        #     data, float_weight, 416, False)
+        float_model = load_float_model(float_weight)
     else:
         print("float weight file dont exist!")
     # float_model,dataloader_iter=load_model_data('yolov3-tiny.yaml','model_files/yolov3-tiny.pt',416,False)
     names = float_model.module.names if hasattr(
         float_model, 'module') else float_model.names  # get class names
 
-    # 构建量化模型
-    quant = torch.quantization.QuantStub()
-    dequant = torch.quantization.DeQuantStub()
-    quant_model = nn.Sequential(
-        quant, float_model, dequant)  # 在全模型开始和结尾加量化和解量化子模块
-    quant_model = quant_model.to('cpu')
-    quant_model.eval()
-    quant_model.qconfig = torch.quantization.default_qconfig
-    print(quant_model.qconfig)
-    model_prepared = torch.quantization.prepare(quant_model)
-
-    # 准备喂数据
-    if opt.ps_self_def:
+    # 准备校准数据
+    if opt.cs_self_def:
         perpare_source = opt.perpare_source
     else:
         dataset_yaml = 'data/' + model_name.split('_')[0]+'.yaml'
         with open(dataset_yaml) as f:
             data_yaml = yaml.safe_load(f)
-        perpare_source = data_yaml[opt.ps_use_set]
-    feed_dataset = LoadImages(perpare_source, img_size=416, stride=32)
+        perpare_source = data_yaml[opt.cs_use_set]
+    calibrate_dataset = LoadImages(perpare_source, img_size=416, stride=32)
 
-    # 喂数据
-    # 对dataset中的图片转为tensor并将范围从0 - 255 to 0.0 - 1.0等等
+    # # 构建量化模型
+    # quant = torch.quantization.QuantStub()
+    # dequant = torch.quantization.DeQuantStub()
+    # quant_model = nn.Sequential(
+    #     quant, float_model, dequant)  # 在全模型开始和结尾加量化和解量化子模块
+    # quant_model = quant_model.to('cpu')
+    # quant_model.eval()
+    # quant_model.qconfig = torch.quantization.default_qconfig
+    # print(quant_model.qconfig)
+    # model_prepared = torch.quantization.prepare(quant_model)
 
-    # dataset = LoadImages('data/images', img_size=416, stride=32)
-    # dataset = LoadImages('data/images/v2-90f21023b3bbdb2df60e349d3f6ec279_r.jpg', img_size=416, stride=32)
-    for i, (path, img, im0s, vid_cap) in enumerate(feed_dataset):
-        if i == opt.ps_num:
-            break
-        img = torch.from_numpy(img).to('cpu')
-        img = img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
-        if img.ndimension() == 3:
-            img = img.unsqueeze(0)
-        model_prepared(img)
+    # # 喂数据
+    # # 对dataset中的图片转为tensor并将范围从0 - 255 to 0.0 - 1.0等等
 
-    quant_model = torch.quantization.convert(model_prepared)
+    # # dataset = LoadImages('data/images', img_size=416, stride=32)
+    # # dataset = LoadImages('data/images/v2-90f21023b3bbdb2df60e349d3f6ec279_r.jpg', img_size=416, stride=32)
+    # for i, (path, img, im0s, vid_cap) in enumerate(calibrate_dataset):
+    #     if i == opt.cs_num:
+    #         break
+    #     img = torch.from_numpy(img).to('cpu')
+    #     img = img.float()  # uint8 to fp16/32
+    #     img /= 255.0  # 0 - 255 to 0.0 - 1.0
+    #     if img.ndimension() == 3:
+    #         img = img.unsqueeze(0)
+    #     model_prepared(img)
+
+    # quant_model = torch.quantization.convert(model_prepared)
+    quant_model = generate_quant_model_baseline(float_model, calibrate_dataset, opt.cs_num)
 
     # 保存量化模型
     if opt.save_qw:
