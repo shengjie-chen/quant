@@ -183,7 +183,7 @@ if __name__ == '__main__':
                 res = []
                 res.append(quant_model_detect_v3t1ancher(data, quant_model))
             else:
-                res = quant_model_detect_v3tall(data, quant_model) # error
+                res = quant_model_detect_v3tall(data, quant_model) 
             
             # Detect/yolo
             # x(bs,255,20,20) to x(bs,3,20,20,85)

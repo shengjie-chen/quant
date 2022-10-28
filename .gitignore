@@ -5,4 +5,5 @@ runs/
 infer_bin/
 models_files/
 models/__pycache__
+__pycache__
 
