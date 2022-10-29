@@ -9,7 +9,7 @@
             "name": "Python: train.py",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "train.py",
             "console": "integratedTerminal",
             "args": [
                 "--img","416",
@@ -50,9 +50,10 @@
             "args": [
                 "--img","416",
                 "--data",
-                "data/coco.yaml",
-                // "data/coco128.yaml",
-                "--weights","./models_files/yolov3-tiny.pt",
+                // "data/coco.yaml",
+                "data/coco128.yaml",
+                "--weights","./runs/train/exp31/weights/best.pt",
+                // "./models_files/yolov3-tiny.pt",
                 // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
                 // "--weights","./models_files/yolov3-tiny.pt",
                 // "--device","0"
@@ -87,7 +88,7 @@
                 // "--task","val",
                 "--recon_qmodel",
                 // "--cs_self_def",
-                "--cs_num", "1000",
+                "--cs_num", "15",
                 "--cs_use_set", "val",
                 "--quant_strategy", "selfdefine",
                 // "--one_anchor"
@@ -105,6 +106,28 @@
 
                 "--source", "data/images",
                 "--cs_num", "20",
+
+
+            ]
+        },
+        {
+            "name": "train_lite voc",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train_lite.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--batch-size", "4",
+                "--epochs", "2",
+                "--device","cpu",
+                // coco
+                // "--data","coco128.yaml",
+                // "--weights","./models_files/yolov3-tiny.pt",
+                // voc
+                "--data", "./data/voc.yaml",
+                "--cfg", "models/yolov3-tiny_voc.yaml",
+                "--weights", "models_files/voc_retrain/weights/best.pt",
 
 
             ]
