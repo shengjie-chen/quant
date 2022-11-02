@@ -10,6 +10,8 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+from torch import quint8
+
 sys.path.append(Path(__file__).parent.parent.absolute().__str__())  # to run '$ python *.py' files in subdirectories
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,7 @@ from utils.autoanchor import check_anchor_order
 from utils.general import make_divisible, check_file, set_logging
 from utils.torch_utils import time_synchronized, fuse_conv_and_bn, model_info, scale_img, initialize_weights, \
     select_device, copy_attr
+from quant_utils import quant_zeropad2d
 
 try:
     import thop  # for FLOPS computation
@@ -149,7 +152,22 @@ class Model(nn.Module):
                     logger.info(f"{'time (ms)':>10s} {'GFLOPS':>10s} {'params':>10s}  {'module'}")
                 logger.info(f'{dt[-1]:10.2f} {o:10.2f} {m.np:10.0f}  {m.type}')
 
-            x = m(x)  # run
+            if isinstance(x,torch.Tensor) and x.dtype is quint8:
+                if isinstance(m, nn.ZeroPad2d):
+                    x = quant_zeropad2d(x)
+                else:
+                    x = m(x)
+            elif isinstance(x,list) and x[0].dtype is quint8:
+                if isinstance(m,Detect):
+                    z = []  
+                    for i,t in enumerate(x):
+                        z.append(m.m[i](t))
+                    x = z  # run
+                    # x = m.m[0](x[0])
+                else:
+                    x = m(x)
+            else:
+                x = m(x)  # run
             y.append(x if m.i in self.save else None)  # save output
 
         if profile:

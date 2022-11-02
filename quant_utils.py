@@ -218,7 +218,10 @@ def quant_model_detect_v3t1ancher(x, quant_model):
 
 def quant_model_detect_v3tall(x, quant_model):
     """针对yolov3-tiny,使用量化模型进行推理检测,使用全部anchor"""
-    # x = quant_model(x)
+    x = quant_model[0](x)
+    x = quant_model[1](x)
+
+    return x
     # print(quant_model)
 
     x = quant_model[0](x)
