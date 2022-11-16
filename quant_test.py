@@ -42,11 +42,11 @@ from scipy import signal
 # from yolov3tiny_quant import quant_model_evaluate_show
 from quant_utils import load_model_data, quant_model_evaluate_show_name, print_size_of_model,\
     load_quant_model, statistics_per_img, load_float_model, quant_model_detect_v3t1ancher, _make_grid, \
-    generate_quant_model_baseline, generate_quant_model_selfdefine,quant_model_detect_v3tall
+    generate_quant_model_baseline, generate_quant_model_selfdefine, quant_model_detect_v3tall
 import warnings
 
 
-def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_thres, device, nd, na, no, stride, anchor_grid):
+def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_thres, device, opt):
     # best_acc, old_file = 0, None
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images',
                                  'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
@@ -57,6 +57,7 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
     correct = 0
     # trained_with_quantization = True
     seen = 0
+    loss = torch.zeros(3, device=device)
 
     # time1 = time.time()
     # for data, target in test_loader:
@@ -70,7 +71,7 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
         with torch.no_grad():
             # pred_reduce = quant_inference_batch(data, quant_model)
             # pred_reduce = quant_model_detect_v3t1ancher(data, quant_model)
-            if(opt.one_anchor):
+            if (opt.one_anchor):
                 res = []
                 res.append(quant_model_detect_v3t1ancher(data, quant_model))
             else:
@@ -159,7 +160,7 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
     # Print results
     pf = '%20s' + '%12i' * 2 + '%12.3g' * 4  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
-    return (mp, mr, map50, map)
+    return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist())
 
 
 if __name__ == '__main__':
@@ -227,10 +228,10 @@ if __name__ == '__main__':
     float_weight = relative_path + '/weights/best.pt'
     quant_weight = relative_path + '/yolov3tiny_quant.pth'
 
-    assert(os.path.exists(float_weight))
-    assert(os.path.exists(quant_weight))
+    assert (os.path.exists(float_weight))
+    assert (os.path.exists(quant_weight))
     print("->使用现有浮点权重：\n\t"+str(float_weight))
-    if(opt.recon_qmodel):  # 重构量化模型
+    if (opt.recon_qmodel):  # 重构量化模型
         # 准备校准数据
         if opt.cs_self_def:  # 自定义校准数据
             perpare_source = opt.cs_dir
@@ -245,7 +246,7 @@ if __name__ == '__main__':
         calibrate_dataset = LoadImages(perpare_source, img_size=416, stride=32)
         float_model = load_float_model(float_weight)
 
-        if(opt.quant_strategy == 'baseline'):  # 使用默认的量化策略
+        if (opt.quant_strategy == 'baseline'):  # 使用默认的量化策略
             print("->baseline量化策略：")
             quant_model = generate_quant_model_baseline(
                 float_model, calibrate_dataset, opt.cs_num)
@@ -265,7 +266,7 @@ if __name__ == '__main__':
                    model_name + '/yolov3tiny_quant.pth')
 
     # Configure
-    if(opt.quant_strategy == 'baseline'):  # 使用默认的量化策略
+    if (opt.quant_strategy == 'baseline'):  # 使用默认的量化策略
         na = quant_model[1].model[-1].na
         # number of detection layers
         nd = 1 if opt.one_anchor else quant_model[1].model[-1].nl
@@ -287,4 +288,4 @@ if __name__ == '__main__':
                                    prefix=colorstr(f'{task}: '))[0]
 
     quant_test(quant_model, dataloader, nc, iouv, niou, names,
-               conf_thres, iou_thres, device, nd, na, no, stride, anchor_grid)
+               conf_thres, iou_thres, device, opt)

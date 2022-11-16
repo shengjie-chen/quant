@@ -20,6 +20,7 @@ from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from quant_test import quant_test
 from quant_utils import generate_quant_model_baseline, generate_quant_model_selfdefine, generate_quant_model_selfdefine_train, load_float_model, load_quant_model
 
 import test  # import test.py to get mAP after each epoch
@@ -35,6 +36,7 @@ from utils.loss import ComputeLoss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
+import warnings
 
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -92,7 +94,7 @@ def train_one_epoch(opt, model, optimizer, device,
 
         # Forward
         with amp.autocast(enabled=cuda):
-            pred = model(imgs,quant=1)  # forward # 前向传播
+            pred = model(imgs, quant=1)  # forward # 前向传播
             # loss scaled by batch_size  # 计算损失，包括分类损失，objectness损失，框的回归损失  # loss为总损失值，loss_items为一个元组，包含分类损失，objectness损失，框的回归损失和总损失
             loss, loss_items = compute_loss(pred, targets.to(device))
 
@@ -141,8 +143,8 @@ def train(hyp, opt, device, tb_writer=None):
     save_dir = Path(opt.save_dir)
     wdir = save_dir / 'weights'
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
-    last = wdir / 'last.pt'
-    best = wdir / 'best.pt'
+    last = wdir / 'quant_last.pth'
+    best = wdir / 'quant_best.pth'
     results_file = save_dir / 'results.txt'
 
     # Save run settings
@@ -158,6 +160,11 @@ def train(hyp, opt, device, tb_writer=None):
     nbs = 64  # nominal batch size
     # accumulate loss before optimizing
     accumulate = max(round(nbs / batch_size), 1)
+    # test
+    iouv = torch.linspace(0.5, 0.95, 10)  # iou vector for mAP@0.5:0.95
+    niou = iouv.numel()
+    conf_thres = 0.001
+    iou_thres = 0.6  # for NMS
 
     init_seeds()  # random seed
     with open(opt.data) as f:  # 加载数据配置信息
@@ -204,12 +211,12 @@ def train(hyp, opt, device, tb_writer=None):
     relative_path = './models_files/' + model_name
     quant_weight = relative_path + '/yolov3tiny_quant.pth'
     float_weight = weights
-    assert(os.path.exists(quant_weight))
+    assert (os.path.exists(quant_weight))
     print("->使用现有浮点权重：\n\t"+str(weights))
     float_model = model
 
     print("->selfdefine量化策略：")
-    quant_model = generate_quant_model_selfdefine_train(float_model)
+    model = generate_quant_model_selfdefine_train(float_model)
 
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
@@ -218,14 +225,14 @@ def train(hyp, opt, device, tb_writer=None):
     #     # if not k.startswith('model.20'):# 冻结20层之前的所有层
     #         freeze.append(k)
 
-    for k, v in quant_model.named_parameters():
+    for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
             print('freezing %s' % k)
             v.requires_grad = False
 
     # Optimizer  选用优化器
-    pg = [p for p in quant_model.parameters() if p.requires_grad]
+    pg = [p for p in model.parameters() if p.requires_grad]
     optimizer = optim.SGD(pg, lr=hyp['lr0'], momentum=hyp['momentum'],
                           weight_decay=hyp["weight_decay"], nesterov=True)
 
@@ -238,9 +245,9 @@ def train(hyp, opt, device, tb_writer=None):
     del ckpt, state_dict
 
     # Image sizes
-    gs = max(int(quant_model.stride.max()), 32)  # grid size (max stride)
+    gs = max(int(model.stride.max()), 32)  # grid size (max stride)
     # number of detection layers (used for scaling hyp['obj'])
-    nl = quant_model.model[-1].nl
+    nl = model.model[-1].nl
     # verify imgsz are gs-multiples
     imgsz, imgsz_test = [check_img_size(x, gs) for x in opt.img_size]
 
@@ -277,9 +284,8 @@ def train(hyp, opt, device, tb_writer=None):
     如果标签框满足上面条件的数量小于总数的99%，则根据k-mean算法聚类新的锚点anchor
     """
     if not opt.noautoanchor:
-        check_anchors(dataset, model=quant_model,
-                      thr=hyp['anchor_t'], imgsz=imgsz)
-    quant_model.half().float()  # pre-reduce anchor precision
+        check_anchors(dataset, model=model, thr=hyp['anchor_t'], imgsz=imgsz)
+    model.half().float()  # pre-reduce anchor precision
 
     # Model parameters
     hyp['box'] *= 3. / nl  # scale to layers
@@ -287,10 +293,10 @@ def train(hyp, opt, device, tb_writer=None):
     hyp['cls'] *= nc / 80. * 3. / nl
     # scale to image size and layers
     hyp['obj'] *= (imgsz / 640) ** 2 * 3. / nl
-    quant_model.nc = nc  # attach number of classes to model
-    quant_model.hyp = hyp  # attach hyperparameters to model
-    quant_model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
-    quant_model.names = names
+    model.nc = nc  # attach number of classes to model
+    model.hyp = hyp  # attach hyperparameters to model
+    model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
+    model.names = names
 
     # Start training
     t0 = time.time()
@@ -303,7 +309,7 @@ def train(hyp, opt, device, tb_writer=None):
     results = (0, 0, 0, 0, 0, 0, 0)
     scheduler.last_epoch = start_epoch
     scaler = amp.GradScaler(enabled=cuda)  # 通过torch1.6自带的api设置混合精度训练
-    compute_loss = ComputeLoss(quant_model)  # init loss class
+    compute_loss = ComputeLoss(model)  # init loss class
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
@@ -311,7 +317,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # epoch ------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):
-        quant_model.train()
+        model.train()
 
         # Update mosaic border
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
@@ -325,7 +331,7 @@ def train(hyp, opt, device, tb_writer=None):
         pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
         # batch -------------------------------------------------------------
-        s, mloss = train_one_epoch(opt, quant_model, optimizer, device, epoch, epochs, pbar, nb, nw, batch_size, nbs, imgsz,
+        s, mloss = train_one_epoch(opt, model, optimizer, device, epoch, epochs, pbar, nb, nw, batch_size, nbs, imgsz,
                                    scaler, plots, save_dir, compute_loss,  cuda, lf, accumulate, gs, mloss)
 
         # end batch ------------------------------------------------------------------------------------------------
@@ -339,20 +345,23 @@ def train(hyp, opt, device, tb_writer=None):
         # mAP # 更新EMA的属性  添加include的属性
         final_epoch = epoch + 1 == epochs
         if not opt.notest or final_epoch:  # Calculate mAP  对测试集进行测试，计算mAP等指标 测试时使用的是EMA模型
+            # float test
             results, maps, times = test.test(data_dict,
-                                             batch_size=batch_size * 2,
-                                             imgsz=imgsz_test,
-                                             model=model,
-                                             single_cls=opt.single_cls,
-                                             dataloader=testloader,
-                                             save_dir=save_dir,
-                                             save_json=is_coco and final_epoch,
-                                             verbose=nc < 50 and final_epoch,
-                                             plots=plots and final_epoch,
-                                             wandb_logger=None,
-                                             compute_loss=compute_loss,
-                                             is_coco=is_coco)
-
+                                    batch_size=batch_size * 2,
+                                    imgsz=imgsz_test,
+                                    model=model,
+                                    single_cls=opt.single_cls,
+                                    dataloader=testloader,
+                                    save_dir=save_dir,
+                                    save_json=is_coco and final_epoch,
+                                    verbose=nc < 50 and final_epoch,
+                                    plots=plots and final_epoch,
+                                    wandb_logger=None,
+                                    compute_loss=compute_loss,
+                                    is_coco=is_coco)
+            # quant test
+            # opt.one_anchor = False
+            # results = quant_test(model, testloader,nc, iouv, niou, names, conf_thres, iou_thres, device, opt)
         # Write 将指标写入result.txt
         with open(results_file, 'a') as f:
             # append metrics, val_loss
@@ -375,17 +384,13 @@ def train(hyp, opt, device, tb_writer=None):
 
         # Save model
         if (not opt.nosave) or (final_epoch):  # if save
-            ckpt = {'epoch': epoch,
-                    'best_fitness': best_fitness,
-                    'training_results': results_file.read_text(),
-                    'model': deepcopy(de_parallel(model)).half(),
-                    'optimizer': optimizer.state_dict()}
+            state_dict = model.state_dict()
 
             # Save last, best and delete
-            torch.save(ckpt, last)
+            torch.save(state_dict, last)
             if best_fitness == fi:
-                torch.save(ckpt, best)
-            del ckpt
+                torch.save(state_dict, best)
+            del state_dict
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
@@ -474,6 +479,7 @@ if __name__ == '__main__':
     # parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     # parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
     opt = parser.parse_args()
+    warnings.filterwarnings('ignore')
 
     set_logging()
     check_requirements(exclude=('pycocotools', 'thop'))

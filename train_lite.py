@@ -34,7 +34,7 @@ from utils.loss import ComputeLoss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
-
+import warnings
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -53,7 +53,7 @@ def train_one_epoch(opt, model, optimizer, device,
                     scaler,  # 通过torch1.6自带的api设置混合精度训练
                     plots, save_dir, compute_loss,  cuda, lf,
                     accumulate,
-                    gs,mloss,
+                    gs, mloss,
                     warmup=False  # 是否热身训练
                     ):
     # batch -------------------------------------------------------------
@@ -312,7 +312,7 @@ def train(hyp, opt, device, tb_writer=None):
         optimizer.zero_grad()
         # batch -------------------------------------------------------------
         s, mloss = train_one_epoch(opt, model, optimizer, device, epoch, epochs, pbar, nb, nw, batch_size, nbs, imgsz,
-                        scaler, plots, save_dir, compute_loss,  cuda, lf, accumulate, gs, mloss)
+                                   scaler, plots, save_dir, compute_loss,  cuda, lf, accumulate, gs, mloss)
 
         # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -458,6 +458,7 @@ if __name__ == '__main__':
     # parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     # parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
     opt = parser.parse_args()
+    warnings.filterwarnings('ignore')
 
     set_logging()
     check_requirements(exclude=('pycocotools', 'thop'))

@@ -159,10 +159,11 @@ class Model(nn.Module):
                 logger.info(f'{dt[-1]:10.2f} {o:10.2f} {m.np:10.0f}  {m.type}')
 
             if quant is 1:
-                if isinstance(m, nn.ZeroPad2d):
-                    x = quant_zeropad2d(x)
-                else:
-                    x = m(x)
+                # if isinstance(m, nn.ZeroPad2d):
+                #     x = quant_zeropad2d(x)
+                # else:
+                #     x = m(x)
+                x = m(x)
             else:
                 x = m(x)  # run
             # x = m(x)  # run
