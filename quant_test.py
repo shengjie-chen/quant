@@ -45,7 +45,8 @@ from quant_utils import load_model_data, quant_model_evaluate_show_name, print_s
     generate_quant_model_baseline, generate_quant_model_selfdefine,quant_model_detect_v3tall
 import warnings
 
-def quant_test(quant_model,dataloader,nc ,iouv,niou,names,conf_thres,iou_thres,device,nd,na,no,stride,anchor_grid):
+
+def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_thres, device, nd, na, no, stride, anchor_grid):
     # best_acc, old_file = 0, None
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images',
                                  'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
@@ -73,25 +74,8 @@ def quant_test(quant_model,dataloader,nc ,iouv,niou,names,conf_thres,iou_thres,d
                 res = []
                 res.append(quant_model_detect_v3t1ancher(data, quant_model))
             else:
-                res = quant_model_detect_v3tall(data, quant_model) 
-            
-            # Detect/yolo
-            # x(bs,255,20,20) to x(bs,3,20,20,85)
-            for i in range(nd):
-                pred_reduce = torch.dequantize(res[i])
-                bs, _, ny, nx = pred_reduce.shape
-                y = pred_reduce.view(bs, na, no, ny, nx).permute(
-                    0, 1, 3, 4, 2).contiguous()
+                z, train_out = quant_model_detect_v3tall(data, quant_model)
 
-                y = y.sigmoid()
-                grid = quant_model[1].model[-1]._make_grid(nx, ny)
-                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + grid) * stride[i]  # xy
-                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * anchor_grid[i]  # wh
-                # y = y.view(bs, -1, no)
-            # print(y)
-                z.append(y.view(bs, -1, no))
-
-            z = torch.cat(z,1)
             target[:, 2:] *= torch.Tensor([width, height, width, height])
             lb = []  # for autolabelling
             y_nms = non_max_suppression(
@@ -175,7 +159,7 @@ def quant_test(quant_model,dataloader,nc ,iouv,niou,names,conf_thres,iou_thres,d
     # Print results
     pf = '%20s' + '%12i' * 2 + '%12.3g' * 4  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
-
+    return (mp, mr, map50, map)
 
 
 if __name__ == '__main__':
@@ -207,7 +191,7 @@ if __name__ == '__main__':
     parser.add_argument('--quant_strategy', type=str, default='baseline',
                         help='choose quant strategy in baseline/selfdefine...')
     parser.add_argument('--save_qw', action='store_true',
-                         help='save quanted weight')
+                        help='save quanted weight')
     opt = parser.parse_args()
     # if('recon_qmodel' in vars(opt)):
     #     if('cs_self_def' in vars(opt)):
@@ -217,50 +201,8 @@ if __name__ == '__main__':
     print(opt, type(opt))
     warnings.filterwarnings('ignore')
 
-    model_name = opt.model_name
-    data = 'models/yolov3-tiny_voc.yaml' if model_name == 'voc_retrain' else 'models/yolov3-tiny.yaml'
-    relative_path = './models_files/' + model_name
-    float_weight = relative_path + '/weights/best.pt'
-    quant_weight = relative_path + '/yolov3tiny_quant.pth'
-
-    assert(os.path.exists(float_weight))
-    assert(os.path.exists(quant_weight))
-    print("->使用现有浮点权重：\n\t"+str(float_weight))
-    if(opt.recon_qmodel): # 重构量化模型
-        # 准备校准数据
-        if opt.cs_self_def: # 自定义校准数据
-            perpare_source = opt.cs_dir
-        else:
-            dataset_yaml = 'data/' + model_name.split('_')[0]+'.yaml'
-            with open(dataset_yaml) as f:
-                data_yaml = yaml.safe_load(f)
-            perpare_source = data_yaml[opt.cs_use_set]
-
-        print("->重构量化权重：\n\t使用校准数据："+str(perpare_source) +
-              "\n\t图片数量："+str(opt.cs_num))
-        calibrate_dataset = LoadImages(perpare_source, img_size=416, stride=32)
-        float_model = load_float_model(float_weight)
-        
-        if(opt.quant_strategy == 'baseline'): # 使用默认的量化策略
-            print("->baseline量化策略：")
-            quant_model = generate_quant_model_baseline(
-                float_model, calibrate_dataset, opt.cs_num)
-        else: # 使用自定义的量化策略，产生了量化模型
-            print("->selfdefine量化策略：")
-            quant_model = generate_quant_model_selfdefine(
-                float_model, calibrate_dataset, opt.cs_num)
-    else: # 加载保存好的量化模型
-        # load model only in default_qconfig strategy
-        quant_model = load_quant_model(float_weight, quant_weight)
-        print("加载现有量化权重："+str(quant_weight))
-
-        # 保存量化模型
-    if opt.save_qw:
-        state_dict = quant_model.state_dict()
-        torch.save(state_dict, './models_files/' +
-                   model_name + '/yolov3tiny_quant.pth')
-
     # Configure
+    device = 'cpu'
     data_yaml = opt.data
     if isinstance(data_yaml, str):
         with open(data_yaml) as f:
@@ -278,18 +220,71 @@ if __name__ == '__main__':
     conf_thres = 0.001
     iou_thres = 0.6  # for NMS
     batch_size = opt.batch_size
-    device = 'cpu'
-    na = quant_model[1].model[-1].na
-    nd = 1 if opt.one_anchor else quant_model[1].model[-1].nl # number of detection layers
-    no = quant_model[1].model[-1].no
-    stride = quant_model[1].model[-1].stride
-    anchor = quant_model[1].model[-1].anchors
-    anchor_grid = quant_model[1].model[-1].anchor_grid
+    model_name = opt.model_name
+
+    data = 'models/yolov3-tiny_voc.yaml' if model_name == 'voc_retrain' else 'models/yolov3-tiny.yaml'
+    relative_path = './models_files/' + model_name
+    float_weight = relative_path + '/weights/best.pt'
+    quant_weight = relative_path + '/yolov3tiny_quant.pth'
+
+    assert(os.path.exists(float_weight))
+    assert(os.path.exists(quant_weight))
+    print("->使用现有浮点权重：\n\t"+str(float_weight))
+    if(opt.recon_qmodel):  # 重构量化模型
+        # 准备校准数据
+        if opt.cs_self_def:  # 自定义校准数据
+            perpare_source = opt.cs_dir
+        else:
+            dataset_yaml = 'data/' + model_name.split('_')[0]+'.yaml'
+            with open(dataset_yaml) as f:
+                data_yaml = yaml.safe_load(f)
+            perpare_source = data_yaml[opt.cs_use_set]
+
+        print("->重构量化权重：\n\t使用校准数据："+str(perpare_source) +
+              "\n\t图片数量："+str(opt.cs_num))
+        calibrate_dataset = LoadImages(perpare_source, img_size=416, stride=32)
+        float_model = load_float_model(float_weight)
+
+        if(opt.quant_strategy == 'baseline'):  # 使用默认的量化策略
+            print("->baseline量化策略：")
+            quant_model = generate_quant_model_baseline(
+                float_model, calibrate_dataset, opt.cs_num)
+        else:  # 使用自定义的量化策略，产生了量化模型
+            print("->selfdefine量化策略：")
+            quant_model = generate_quant_model_selfdefine(
+                float_model, calibrate_dataset, opt.cs_num)
+    else:  # 加载保存好的量化模型
+        # load model only in default_qconfig strategy
+        quant_model = load_quant_model(float_weight, quant_weight)
+        print("加载现有量化权重："+str(quant_weight))
+
+        # 保存量化模型
+    if opt.save_qw:
+        state_dict = quant_model.state_dict()
+        torch.save(state_dict, './models_files/' +
+                   model_name + '/yolov3tiny_quant.pth')
+
+    # Configure
+    if(opt.quant_strategy == 'baseline'):  # 使用默认的量化策略
+        na = quant_model[1].model[-1].na
+        # number of detection layers
+        nd = 1 if opt.one_anchor else quant_model[1].model[-1].nl
+        no = quant_model[1].model[-1].no
+        stride = quant_model[1].model[-1].stride
+        anchor = quant_model[1].model[-1].anchors
+        anchor_grid = quant_model[1].model[-1].anchor_grid
+    else:
+        na = quant_model.model[-1].na
+        # number of detection layers
+        nd = 1 if opt.one_anchor else quant_model.model[-1].nl
+        no = quant_model.model[-1].no
+        stride = quant_model.model[-1].stride
+        anchor = quant_model.model[-1].anchors
+        anchor_grid = quant_model.model[-1].anchor_grid
 
     task = opt.task
     dataloader = create_dataloader(data_cfg[task], imgsz, batch_size, gs, opt, pad=0.5, rect=True,
                                    prefix=colorstr(f'{task}: '))[0]
 
-    quant_test(quant_model,dataloader,nc ,iouv,niou,names,conf_thres,iou_thres,device,nd,na,no,stride,anchor_grid)
-
- 
+    quant_test(quant_model, dataloader, nc, iouv, niou, names,
+               conf_thres, iou_thres, device, nd, na, no, stride, anchor_grid)

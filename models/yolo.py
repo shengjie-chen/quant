@@ -35,6 +35,7 @@ class Detect(nn.Module):
 
     def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
         super(Detect, self).__init__()
+        self.dequant = torch.quantization.DeQuantStub()
         self.nc = nc  # number of classes
         self.no = nc + 5  # number of outputs per anchor
         self.nl = len(anchors)  # number of detection layers
@@ -51,6 +52,8 @@ class Detect(nn.Module):
         z = []  # inference output
         for i in range(self.nl):
             x[i] = self.m[i](x[i])  # conv
+            if x[i].dtype is quint8:
+                x[i] = self.dequant(x[i])
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
@@ -79,6 +82,7 @@ class Detect(nn.Module):
 class Model(nn.Module):
     def __init__(self, cfg='yolov3.yaml', ch=3, nc=None, anchors=None):  # model, input channels, number of classes
         super(Model, self).__init__()
+        self.quant = torch.quantization.QuantStub()
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
         else:  # is *.yaml
@@ -117,11 +121,11 @@ class Model(nn.Module):
         self.info()
         logger.info('')
 
-    def forward(self, x, augment=False, profile=False):
+    def forward(self, x, augment=False, profile=False, quant=0):# quant : 0非量化，1量化，2校准
         if augment:
             return self.forward_augment(x)  # augmented inference, None
         else:
-            return self.forward_once(x, profile)  # single-scale inference, train
+            return self.forward_once(x, profile, quant)  # single-scale inference, train
 
     def forward_augment(self, x):
         img_size = x.shape[-2:]  # height, width
@@ -136,8 +140,10 @@ class Model(nn.Module):
             y.append(yi)
         return torch.cat(y, 1), None  # augmented inference, train
 
-    def forward_once(self, x, profile=False):
+    def forward_once(self, x, profile=False, quant=0):
         y, dt = [], []  # outputs
+        if quant is not 0:
+            x = self.quant(x)
         for m in self.model:
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
@@ -152,22 +158,15 @@ class Model(nn.Module):
                     logger.info(f"{'time (ms)':>10s} {'GFLOPS':>10s} {'params':>10s}  {'module'}")
                 logger.info(f'{dt[-1]:10.2f} {o:10.2f} {m.np:10.0f}  {m.type}')
 
-            if isinstance(x,torch.Tensor) and x.dtype is quint8:
+            if quant is 1:
                 if isinstance(m, nn.ZeroPad2d):
                     x = quant_zeropad2d(x)
                 else:
                     x = m(x)
-            elif isinstance(x,list) and x[0].dtype is quint8:
-                if isinstance(m,Detect):
-                    z = []  
-                    for i,t in enumerate(x):
-                        z.append(m.m[i](t))
-                    x = z  # run
-                    # x = m.m[0](x[0])
-                else:
-                    x = m(x)
             else:
                 x = m(x)  # run
+            # x = m(x)  # run
+            
             y.append(x if m.i in self.save else None)  # save output
 
         if profile:

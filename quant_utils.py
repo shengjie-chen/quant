@@ -15,12 +15,13 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 from detect import detect
 from models.experimental import attempt_load
+# from models.yolo import Model
 from utils.datasets import create_dataloader, letterbox
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
     box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
-from utils.torch_utils import select_device, time_synchronized
+from utils.torch_utils import intersect_dicts, select_device, time_synchronized
 
 import argparse
 import time
@@ -30,7 +31,6 @@ import cv2
 import torch
 import torch.backends.cudnn as cudnn
 
-from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
     scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path, save_one_box
@@ -39,6 +39,8 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized
 from collections import OrderedDict
 import math
 from scipy import signal
+
+# from models.quant_yolo import attempt_load_quant
 
 per_channel_qconfig_1 = torch.quantization.QConfig(
         activation=torch.quantization.default_histogram_observer,
@@ -54,22 +56,7 @@ per_channel_qconfig_4 = torch.quantization.QConfig(
         activation=torch.quantization.HistogramObserver.with_args(quant_min=0, quant_max=191),
         weight=torch.quantization.default_per_channel_weight_observer)
 
-def load_model_data(data, weights, imgsz, rect):
-    # data='kaggle-facemask.yaml'
-    # weights='yolov3tiny_facemask.pt'
-    # imgsz=640
-    with open(data) as f:
-        data = yaml.safe_load(f)
-    check_dataset(data)
-    nc = int(data['nc'])
-    model = attempt_load(weights, map_location='cpu')
-    gs = max(int(model.stride.max()), 32)  # grid size (max stride)
-    imgsz = check_img_size(imgsz, s=gs)  # check img_size
-    task = 'val'
-    dataloader = create_dataloader(
-        data[task], imgsz, 1, gs, False, pad=0.5, rect=rect, prefix=colorstr(f'{task}: '))[0]
-    dataloader_iter = iter(dataloader)
-    return model, dataloader_iter
+
 
 
 # def generate_quant_model_baseline(model, dataloader_iter, quant_model_name):
@@ -116,9 +103,14 @@ def generate_quant_model_baseline(model, dataloader_iter, cal_num=100):
 
 def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=100):
     """指定量化策略来产生一个量化模型,使用自定义的量化策略"""
-    quant = torch.quantization.QuantStub()
-    dequant = torch.quantization.DeQuantStub()
-    quant_model = nn.Sequential(quant, model, dequant)
+    # quant = torch.quantization.QuantStub()
+    # dequant = torch.quantization.DeQuantStub()
+    # quant_model = nn.Sequential(quant, model, dequant)
+    if not hasattr(model, 'quant'):
+        model.quant = torch.quantization.QuantStub()
+    if not hasattr(model.model[-1], 'dequant'):
+        model.model[-1].dequant = torch.quantization.DeQuantStub()
+    quant_model = model
     quant_model = quant_model.to('cpu')
     # quant_model.qconfig = torch.quantization.default_per_channel_qconfig
     # quant_model.qconfig = torch.quantization.default_qconfig
@@ -138,25 +130,26 @@ def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=100):
             img /= 255.0  # 0 - 255 to 0.0 - 1.0
             if img.ndimension() == 3:
                 img = img.unsqueeze(0)
-            quant_model(img)
+            quant_model(img,quant=2)
     quant_model = torch.quantization.convert(quant_model, inplace=False)
     return quant_model
 
-def load_quant_model(float_model_name, quant_model_name):
-    model = attempt_load(float_model_name, map_location='cpu',inplace=False)
-    quant = torch.quantization.QuantStub()
-    dequant = torch.quantization.DeQuantStub()
-    quant_model = nn.Sequential(quant, model, dequant)
-
+def generate_quant_model_selfdefine_train(model):
+    """指定量化策略来产生一个量化模型,使用自定义的量化策略,用于train脚本"""
+    if not hasattr(model, 'quant'):
+        model.quant = torch.quantization.QuantStub()
+    if not hasattr(model.model[-1], 'dequant'):
+        model.model[-1].dequant = torch.quantization.DeQuantStub()
+    quant_model = model
     quant_model = quant_model.to('cpu')
-    quant_model.qconfig = torch.quantization.default_qconfig
-    quant_model = torch.quantization.prepare(quant_model, inplace=False)
-    quant_model = torch.quantization.convert(quant_model, inplace=False)
-
-    state_dict_t = torch.load(quant_model_name)
-    quant_model.load_state_dict(state_dict_t)
-    quant_model = quant_model.to('cpu')
+    quant_model.train()
+    quant_model.qconfig = per_channel_qconfig_4
+    print("\t",end='')
+    print(quant_model.qconfig)
+    quant_model = torch.quantization.prepare_qat(quant_model, inplace=False)
     return quant_model
+
+
 
 def quant_zeropad2d(x):
     """
@@ -218,9 +211,7 @@ def quant_model_detect_v3t1ancher(x, quant_model):
 
 def quant_model_detect_v3tall(x, quant_model):
     """针对yolov3-tiny,使用量化模型进行推理检测,使用全部anchor"""
-    x = quant_model[0](x)
-    x = quant_model[1](x)
-
+    x = quant_model(x,quant=1)
     return x
     # print(quant_model)
 
@@ -416,6 +407,22 @@ def print_size_of_model(model):
     torch.save(model.state_dict(), "temp.p")
     print('Size (MB):', os.path.getsize("temp.p")/1e6)
     os.remove('temp.p')
+
+def load_quant_model(float_model_name, quant_model_name):
+    model = attempt_load(float_model_name, map_location='cpu',inplace=False)
+    quant = torch.quantization.QuantStub()
+    dequant = torch.quantization.DeQuantStub()
+    quant_model = nn.Sequential(quant, model, dequant)
+
+    quant_model = quant_model.to('cpu')
+    quant_model.qconfig = torch.quantization.default_qconfig
+    quant_model = torch.quantization.prepare(quant_model, inplace=False)
+    quant_model = torch.quantization.convert(quant_model, inplace=False)
+
+    state_dict_t = torch.load(quant_model_name)
+    quant_model.load_state_dict(state_dict_t)
+    quant_model = quant_model.to('cpu')
+    return quant_model
 
 def load_float_model(weights):
     """加载浮点模型"""

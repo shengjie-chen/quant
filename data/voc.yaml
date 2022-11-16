@@ -11,13 +11,14 @@ download: bash data/scripts/get_voc.sh
 
 # train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
 train: ../../datasets/VOC/images/train2007/  # 2501 images
-val: ../../datasets/VOC/images/val2007mini/  # 259 images
-# val: ../../datasets/VOC/images/val2007/  # 2510 images
+# val: ../../datasets/VOC/images/val2007mini/  # 259 images
+val: ../../datasets/VOC/images/val2007/  # 2510 images
 # train: ../../datasets/VOC/images/train/  # 8218 images
 # val: ../../datasets/VOC/images/val/  # 8333 images
 # train: ../../datasets/VOC/images/trainval/  # 16551 images
 # val: ../../datasets/VOC/images/test2007/  # 4952 images
-test: ../../datasets/VOC/images/test2007/  # 4952 images
+# test: ../../datasets/VOC/images/test2007/  # 4952 images
+test: ../../datasets/VOC/images/val2007mini/  # 259 images
 
 # number of classes
 nc: 20

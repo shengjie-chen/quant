@@ -95,6 +95,26 @@
             ]
         },
         {
+            "name": "quant_train.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/quant_train.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--batch-size", "4",
+                "--epochs", "2",
+                "--device","cpu",
+                // coco
+                // "--data","coco128.yaml",
+                // "--weights","./models_files/yolov3-tiny.pt",
+                // voc
+                "--data", "./data/voc.yaml",
+                "--cfg", "models/yolov3-tiny_voc.yaml",
+                "--weights", "models_files/voc_retrain/weights/best.pt",
+            ]
+        },
+        {
             "name": "Python: quant_detect.py",
             "type": "python",
             "request": "launch",
