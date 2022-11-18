@@ -142,7 +142,7 @@ class Model(nn.Module):
 
     def forward_once(self, x, profile=False, quant=0):
         y, dt = [], []  # outputs
-        if quant is not 0:
+        if quant != 0:
             x = self.quant(x)
         for m in self.model:
             if m.f != -1:  # if not from previous layer
@@ -158,7 +158,7 @@ class Model(nn.Module):
                     logger.info(f"{'time (ms)':>10s} {'GFLOPS':>10s} {'params':>10s}  {'module'}")
                 logger.info(f'{dt[-1]:10.2f} {o:10.2f} {m.np:10.0f}  {m.type}')
 
-            if quant is 1:
+            if quant == 1:
                 # if isinstance(m, nn.ZeroPad2d):
                 #     x = quant_zeropad2d(x)
                 # else:

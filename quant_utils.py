@@ -39,6 +39,7 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized
 from collections import OrderedDict
 import math
 from scipy import signal
+from models.common import Conv
 
 # from models.quant_yolo import attempt_load_quant
 
@@ -134,6 +135,7 @@ def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=100):
     quant_model = torch.quantization.convert(quant_model, inplace=False)
     return quant_model
 
+
 def generate_quant_model_selfdefine_train(model):
     """指定量化策略来产生一个量化模型,使用自定义的量化策略,用于train脚本"""
     if not hasattr(model, 'quant'):
@@ -141,10 +143,15 @@ def generate_quant_model_selfdefine_train(model):
     if not hasattr(model.model[-1], 'dequant'):
         model.model[-1].dequant = torch.quantization.DeQuantStub()
     quant_model = model
+    modules_to_fuse = ['conv', 'bn']
+    for i, w in enumerate(quant_model.model):
+        if isinstance(w,Conv):
+            quant_model.model[i] = torch.ao.quantization.fuse_modules_qat(
+            quant_model.model[i], modules_to_fuse)
     quant_model = quant_model.to('cpu')
     quant_model.train()
     quant_model.qconfig = per_channel_qconfig_4
-    print("\t",end='')
+    print("\t", end='')
     print(quant_model.qconfig)
     quant_model = torch.quantization.prepare_qat(quant_model, inplace=False)
     return quant_model
@@ -410,12 +417,15 @@ def print_size_of_model(model):
 
 def load_quant_model(float_model_name, quant_model_name):
     model = attempt_load(float_model_name, map_location='cpu',inplace=False)
-    quant = torch.quantization.QuantStub()
-    dequant = torch.quantization.DeQuantStub()
-    quant_model = nn.Sequential(quant, model, dequant)
+    if not hasattr(model, 'quant'):
+        model.quant = torch.quantization.QuantStub()
+    if not hasattr(model.model[-1], 'dequant'):
+        model.model[-1].dequant = torch.quantization.DeQuantStub()
+    quant_model = model 
 
     quant_model = quant_model.to('cpu')
-    quant_model.qconfig = torch.quantization.default_qconfig
+    # quant_model.qconfig = torch.quantization.default_qconfig
+    quant_model.qconfig = per_channel_qconfig_4
     quant_model = torch.quantization.prepare(quant_model, inplace=False)
     quant_model = torch.quantization.convert(quant_model, inplace=False)
 

@@ -1,9 +1,11 @@
 *.pt
 *.pth
 *.bin
+*.pyc
 runs/
 infer_bin/
 models_files/
 models/__pycache__
 __pycache__
 utils/__pycache__
+uart/

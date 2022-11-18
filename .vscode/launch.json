@@ -23,6 +23,21 @@
                
             ]
         },
+        {
+            "name": "train.py: float VOC",
+            "type": "python",
+            "request": "launch",
+            "program": "train.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--data","data/voc.yaml",
+                "--weights","./models_files/yolov3-tiny.pt",
+                "--batch-size","16",
+                "--epochs","100",  
+                "--device","9"
+            ]
+        },
 
         {
             "name": "Python: val.py",
@@ -83,15 +98,18 @@
             "program": "${workspaceFolder}/quant_test.py",
             "console": "integratedTerminal",
             "args": [
-                // "--model_name","coco128_retrain",
-                // "--data","./data/coco128.yaml",
-                // "--task","val",
-                "--recon_qmodel",
-                // "--cs_self_def",
-                "--cs_num", "15",
-                "--cs_use_set", "val",
+                // // "--model_name","coco128_retrain",
+                // // "--data","./data/coco128.yaml",
+                // // "--task","val",
+                // "--recon_qmodel",
+                // // "--cs_self_def",
+                // "--cs_num", "15",
+                // "--cs_use_set", "val",
                 "--quant_strategy", "selfdefine",
-                // "--one_anchor"
+                // // "--one_anchor"
+
+                // 测试训练权重
+                "--quant_weight", "/SSD/csj/CNN/quantv2/runs/train/exp61/weights/best.pt",
             ]
         },
         {
@@ -115,6 +133,22 @@
             ]
         },
         {
+            "name": "quant_train.py: VOC",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/quant_train.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--img","416",
+                "--batch-size", "16",
+                "--epochs", "50",
+                "--device","cpu",
+                "--data", "./data/voc.yaml",
+                "--cfg", "models/yolov3-tiny_voc.yaml",
+                "--weights", "models_files/voc_retrain/weights/best.pt",
+            ]
+        },
+        {
             "name": "Python: quant_detect.py",
             "type": "python",
             "request": "launch",
@@ -131,25 +165,19 @@
             ]
         },
         {
-            "name": "train_lite voc",
+            "name": "train_lite.py: float VOC",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/train_lite.py",
             "console": "integratedTerminal",
             "args": [
                 "--img","416",
-                "--batch-size", "4",
-                "--epochs", "2",
-                "--device","cpu",
-                // coco
-                // "--data","coco128.yaml",
-                // "--weights","./models_files/yolov3-tiny.pt",
-                // voc
+                "--batch-size", "16",
+                "--epochs", "200",
+                "--device","9",
                 "--data", "./data/voc.yaml",
                 "--cfg", "models/yolov3-tiny_voc.yaml",
-                "--weights", "models_files/voc_retrain/weights/best.pt",
-
-
+                "--weights", "./models_files/yolov3-tiny.pt",
             ]
         }
     ]

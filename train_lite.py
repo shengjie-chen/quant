@@ -460,7 +460,7 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     warnings.filterwarnings('ignore')
 
-    set_logging()
+    # set_logging()
     check_requirements(exclude=('pycocotools', 'thop'))
 
     opt.data, opt.cfg, opt.hyp = check_file(opt.data), check_file(
@@ -470,6 +470,26 @@ if __name__ == '__main__':
     # extend to 2 sizes (train, test)
     opt.img_size.extend([opt.img_size[-1]] * (2 - len(opt.img_size)))
     opt.save_dir = str(increment_path(Path(opt.project) / opt.name))
+    os.mkdir(opt.save_dir)
+    
+    # set_logging()
+    log_file = opt.save_dir + '/train.log'
+    os.mknod(log_file)
+    logger.setLevel(level=logging.DEBUG)
+
+    file_formatter = logging.Formatter('%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s')
+    stream_formatter = logging.Formatter('%(message)s')
+
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(level=logging.INFO)
+    file_handler.setFormatter(file_formatter)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    stream_handler.setFormatter(stream_formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
 
     # DDP mode
     device = select_device(opt.device, batch_size=opt.batch_size)

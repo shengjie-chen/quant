@@ -143,8 +143,11 @@ def train(hyp, opt, device, tb_writer=None):
     save_dir = Path(opt.save_dir)
     wdir = save_dir / 'weights'
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
+    # last = wdir / 'last.pt'
+    # best = wdir / 'best.pt'    
     last = wdir / 'quant_last.pth'
     best = wdir / 'quant_best.pth'
+    quant_best = wdir / 'quant_best.pth'
     results_file = save_dir / 'results.txt'
 
     # Save run settings
@@ -202,6 +205,8 @@ def train(hyp, opt, device, tb_writer=None):
         model.load_state_dict(state_dict, strict=False)  # load
         logger.info('Transferred %g/%g items from %s' % (len(state_dict),
                     len(model.state_dict()), weights))  # report 少加载两个键值对(anchors,anchor_grid)
+
+        # model = attempt_load(weights, map_location='cpu',inplace=True)
     else:
         model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get(
             'anchors')).to(device)  # create
@@ -285,7 +290,7 @@ def train(hyp, opt, device, tb_writer=None):
     """
     if not opt.noautoanchor:
         check_anchors(dataset, model=model, thr=hyp['anchor_t'], imgsz=imgsz)
-    model.half().float()  # pre-reduce anchor precision
+    model.float()  # pre-reduce anchor precision
 
     # Model parameters
     hyp['box'] *= 3. / nl  # scale to layers
@@ -345,23 +350,29 @@ def train(hyp, opt, device, tb_writer=None):
         # mAP # 更新EMA的属性  添加include的属性
         final_epoch = epoch + 1 == epochs
         if not opt.notest or final_epoch:  # Calculate mAP  对测试集进行测试，计算mAP等指标 测试时使用的是EMA模型
+            if opt.float_test:
             # float test
-            results, maps, times = test.test(data_dict,
-                                    batch_size=batch_size * 2,
-                                    imgsz=imgsz_test,
-                                    model=model,
-                                    single_cls=opt.single_cls,
-                                    dataloader=testloader,
-                                    save_dir=save_dir,
-                                    save_json=is_coco and final_epoch,
-                                    verbose=nc < 50 and final_epoch,
-                                    plots=plots and final_epoch,
-                                    wandb_logger=None,
-                                    compute_loss=compute_loss,
-                                    is_coco=is_coco)
+                results, maps, times = test.test(data_dict,
+                                                batch_size=batch_size * 2,
+                                                imgsz=imgsz_test,
+                                                model=model,
+                                                single_cls=opt.single_cls,
+                                                dataloader=testloader,
+                                                save_dir=save_dir,
+                                                save_json=is_coco and final_epoch,
+                                                verbose=nc < 50 and final_epoch,
+                                                plots=plots and final_epoch,
+                                                wandb_logger=None,
+                                                compute_loss=compute_loss,
+                                                is_coco=is_coco)
+            else:
             # quant test
-            # opt.one_anchor = False
-            # results = quant_test(model, testloader,nc, iouv, niou, names, conf_thres, iou_thres, device, opt)
+                print("quant model test:")
+                opt.one_anchor = False
+                quant_model = model
+                quant_model.eval()
+                results = quant_test(quant_model, testloader, nc, iouv,
+                                     niou, names, conf_thres, iou_thres, device, opt, compute_loss=compute_loss)
         # Write 将指标写入result.txt
         with open(results_file, 'a') as f:
             # append metrics, val_loss
@@ -384,7 +395,22 @@ def train(hyp, opt, device, tb_writer=None):
 
         # Save model
         if (not opt.nosave) or (final_epoch):  # if save
-            state_dict = model.state_dict()
+            ckpt = {'epoch': epoch,
+                    'best_fitness': best_fitness,
+                    'training_results': results_file.read_text(),
+                    'model': deepcopy(de_parallel(model)).half(),
+                    'optimizer': optimizer.state_dict()}
+
+# # Save float last, best and delete
+            # torch.save(ckpt, last)
+            # if best_fitness == fi:
+            #     torch.save(ckpt, best)
+            # del ckpt
+
+# Save quant
+            quant_model = model 
+            quant_model = torch.quantization.convert(quant_model, inplace=False)
+            state_dict = quant_model.state_dict()
 
             # Save last, best and delete
             torch.save(state_dict, last)
@@ -407,7 +433,7 @@ def train(hyp, opt, device, tb_writer=None):
                                           imgsz=imgsz_test,
                                           conf_thres=0.001,
                                           iou_thres=0.7,
-                                          model=attempt_load(m, device).half(),
+                                          model=attempt_load(m, device),
                                           single_cls=opt.single_cls,
                                           dataloader=testloader,
                                           save_dir=save_dir,
@@ -415,10 +441,6 @@ def train(hyp, opt, device, tb_writer=None):
                                           plots=False,
                                           is_coco=is_coco)
 
-        # Strip optimizers
-        for f in last, best:
-            if f.exists():
-                strip_optimizer(f)  # strip optimizers
     else:
         dist.destroy_process_group()
     torch.cuda.empty_cache()
@@ -478,6 +500,7 @@ if __name__ == '__main__':
     # parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     # parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     # parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
+    parser.add_argument('--float_test', action='store_true', help='验证测试使用float模型，默认使用的是量化模型')
     opt = parser.parse_args()
     warnings.filterwarnings('ignore')
 

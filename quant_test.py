@@ -46,7 +46,7 @@ from quant_utils import load_model_data, quant_model_evaluate_show_name, print_s
 import warnings
 
 
-def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_thres, device, opt):
+def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_thres, device, opt, compute_loss=None):
     # best_acc, old_file = 0, None
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images',
                                  'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
@@ -66,17 +66,27 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
         # print(len(test_loader.dataset[0][0][0]))
         data = data.float()  # uint8 to fp16/32
         data /= 255.0  # 0 - 255 to 0.0 - 1.0
+        target = target.to(device)
         nb, _, height, width = data.shape  # batch size, channels, height, width
         z = []  # inference output
         with torch.no_grad():
             # pred_reduce = quant_inference_batch(data, quant_model)
             # pred_reduce = quant_model_detect_v3t1ancher(data, quant_model)
+
+            # Run model
             if (opt.one_anchor):
                 res = []
                 res.append(quant_model_detect_v3t1ancher(data, quant_model))
             else:
                 z, train_out = quant_model_detect_v3tall(data, quant_model)
 
+            # Compute loss
+            if compute_loss:
+                # box, obj, cls
+                loss += compute_loss([x.float()
+                                     for x in train_out], target)[1][:3]
+
+            # Run NMS
             target[:, 2:] *= torch.Tensor([width, height, width, height])
             lb = []  # for autolabelling
             y_nms = non_max_suppression(
@@ -193,6 +203,11 @@ if __name__ == '__main__':
                         help='choose quant strategy in baseline/selfdefine...')
     parser.add_argument('--save_qw', action='store_true',
                         help='save quanted weight')
+
+    parser.add_argument('--quant_weight', type=str, default=None,
+                        help='choose one quant weight, and recon_qmodel must be false')       
+    parser.add_argument('--float_weight', type=str, default=None,
+                        help='choose one float weight, and recon_qmodel must be true')                    
     opt = parser.parse_args()
     # if('recon_qmodel' in vars(opt)):
     #     if('cs_self_def' in vars(opt)):
@@ -225,8 +240,8 @@ if __name__ == '__main__':
 
     data = 'models/yolov3-tiny_voc.yaml' if model_name == 'voc_retrain' else 'models/yolov3-tiny.yaml'
     relative_path = './models_files/' + model_name
-    float_weight = relative_path + '/weights/best.pt'
-    quant_weight = relative_path + '/yolov3tiny_quant.pth'
+    float_weight = relative_path + '/weights/best.pt' if opt.float_weight is None else opt.float_weight
+    quant_weight = relative_path + '/yolov3tiny_quant.pth' if opt.quant_weight is None else opt.quant_weight
 
     assert (os.path.exists(float_weight))
     assert (os.path.exists(quant_weight))
