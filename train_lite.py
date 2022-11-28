@@ -200,15 +200,19 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
-    # for k,v in state_dict.items():
-    #     if k.startswith('model'):# 冻结所有层
-    #     # if not k.startswith('model.20'):# 冻结20层之前的所有层
-    #         freeze.append(k)
+    for k, v in state_dict.items():
+        # if k.startswith('model'):# 冻结所有层
+        if opt.freeze_mode == 1:
+            if not k.startswith('model.20'):  # 冻结20层之前的所有层
+                freeze.append(k)
+        elif opt.freeze_mode == 2:
+            if not (k.startswith('model.20') or k.startswith('model.15') or k.startswith('model.19')):  # 不冻结最后三层
+                freeze.append(k)
 
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
-            print('freezing %s' % k)
+            logger.info('freezing %s' % k)
             v.requires_grad = False
 
     # Optimizer  选用优化器
@@ -312,7 +316,7 @@ def train(hyp, opt, device, tb_writer=None):
         optimizer.zero_grad()
         # batch -------------------------------------------------------------
         s, mloss = train_one_epoch(opt, model, optimizer, device, epoch, epochs, pbar, nb, nw, batch_size, nbs, imgsz,
-                                   scaler, plots, save_dir, compute_loss,  cuda, lf, accumulate, gs, mloss)
+                                   scaler, plots, save_dir, compute_loss,  cuda, lf, accumulate, gs, mloss, warmup=opt.warmup)
 
         # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -449,6 +453,9 @@ if __name__ == '__main__':
                         help='save to project/name')
     # parser.add_argument('--entity', default=None, help='W&B entity')
     parser.add_argument('--name', default='exp', help='save to project/name')
+    parser.add_argument('--warmup', action='store_true', help='warm up train')
+    parser.add_argument('--freeze_mode', type=int, default=0,
+                        help='support 0/1/2')
     # parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     # parser.add_argument('--quad', action='store_true', help='quad dataloader')
     # parser.add_argument('--linear-lr', action='store_true', help='linear LR')
@@ -471,13 +478,14 @@ if __name__ == '__main__':
     opt.img_size.extend([opt.img_size[-1]] * (2 - len(opt.img_size)))
     opt.save_dir = str(increment_path(Path(opt.project) / opt.name))
     os.mkdir(opt.save_dir)
-    
+
     # set_logging()
     log_file = opt.save_dir + '/train.log'
     os.mknod(log_file)
     logger.setLevel(level=logging.DEBUG)
 
-    file_formatter = logging.Formatter('%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s')
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s')
     stream_formatter = logging.Formatter('%(message)s')
 
     file_handler = logging.FileHandler(log_file)
