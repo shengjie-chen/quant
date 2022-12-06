@@ -4,7 +4,6 @@
     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
         {
             "name": "Python: train.py",
             "type": "python",
@@ -12,15 +11,19 @@
             "program": "train.py",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
-                "--data","coco128.yaml",
-                "--weights","./models_files/yolov3-tiny.pt",
-                "--batch-size","4",
-                "--epochs","2"  
+                "--img",
+                "416",
+                "--data",
+                "coco128.yaml",
+                "--weights",
+                "./models_files/yolov3-tiny.pt",
+                "--batch-size",
+                "4",
+                "--epochs",
+                "2"
                 // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
                 // "--weights","./models_files/yolov3-tiny.pt",
                 // "--device","0"
-               
             ]
         },
         {
@@ -30,15 +33,20 @@
             "program": "train.py",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
-                "--data","data/voc.yaml",
-                "--weights","./models_files/yolov3-tiny.pt",
-                "--batch-size","16",
-                "--epochs","100",  
-                "--device","9"
+                "--img",
+                "416",
+                "--data",
+                "data/voc.yaml",
+                "--weights",
+                "./models_files/yolov3-tiny.pt",
+                "--batch-size",
+                "16",
+                "--epochs",
+                "100",
+                "--device",
+                "9"
             ]
         },
-
         {
             "name": "Python: val.py",
             "type": "python",
@@ -46,16 +54,17 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
-                "--data","data/coco128.yaml",
-                "--weights","./models_files/yolov3-tiny.pt",
+                "--img",
+                "416",
+                "--data",
+                "data/coco128.yaml",
+                "--weights",
+                "./models_files/yolov3-tiny.pt",
                 // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
                 // "--weights","./models_files/yolov3-tiny.pt",
                 // "--device","0"
-               
             ]
         },
-
         {
             "name": "Python: test.py",
             "type": "python",
@@ -63,15 +72,20 @@
             "program": "test.py",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
+                "--img",
+                "416",
                 "--data",
                 // "data/coco.yaml",
-                "data/coco128.yaml",
-                "--weights","./runs/train/exp31/weights/best.pt",
+                // "data/coco128.yaml",
+                "data/voc.yaml",
+                "--weights",
+                "models_files/voc_retrain/weights/best.pt",
+                // "./runs/train/exp31/weights/best.pt",
                 // "./models_files/yolov3-tiny.pt",
                 // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
                 // "--weights","./models_files/yolov3-tiny.pt",
-                // "--device","0"
+                "--device","1",
+                // "--save-txt"
                 // "--task","test"
             ]
         },
@@ -82,9 +96,12 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
-                "--source","data/images/zidane.jpg",
-                "--weights","./models_files/yolov3tiny_facemask.pt",
+                "--img",
+                "416",
+                "--source",
+                "data/images/zidane.jpg",
+                "--weights",
+                "./models_files/yolov3tiny_facemask.pt",
                 // "--weights","./models_files/yolov3tiny_facemask_quant.pth",
                 // "--weights","models_files/voc_retrain/best.pt",
                 "--view-img"
@@ -98,18 +115,40 @@
             "program": "${workspaceFolder}/quant_test.py",
             "console": "integratedTerminal",
             "args": [
-                // // "--model_name","coco128_retrain",
-                // // "--data","./data/coco128.yaml",
-                // // "--task","val",
+                // "--model_name","coco128_retrain",
+                // "--data","./data/coco128.yaml",
+                // "--task","val",
                 // "--recon_qmodel",
-                // // "--cs_self_def",
-                // "--cs_num", "15",
+                "--cs_self_def",
                 // "--cs_use_set", "val",
-                "--quant_strategy", "selfdefine",
+                "--quant_strategy",
+                "selfdefine",
+                "--cs_dir",
+                "/SSD/csj/CNN/datasets/VOC/images/test2007",
+                "--cs_num",
+                "2",
+                // "--act_qmin",
+                // "",
+                // "--act_qmax",
+                // "",
                 // // "--one_anchor"
-
                 // 测试训练权重
-                "--quant_weight", "/SSD/csj/CNN/quantv2/runs/train/exp61/weights/best.pt",
+                "--quant_weight", 
+                // "/SSD/csj/CNN/quantv2/runs/train/exp61/weights/best.pt",
+                "runs/quant_train/exp27/weights/quant_best.pth",
+            ]
+        },
+        {
+            "name": "Python: quant_test_batchopt.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/quant_test_batchopt.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--recon_qmodel",
+                "--cs_self_def",
+                "--quant_strategy",
+                "selfdefine",
             ]
         },
         {
@@ -119,17 +158,24 @@
             "program": "${workspaceFolder}/quant_train.py",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
-                "--batch-size", "4",
-                "--epochs", "2",
-                "--device","cpu",
+                "--img",
+                "416",
+                "--batch-size",
+                "4",
+                "--epochs",
+                "2",
+                "--device",
+                "cpu",
                 // coco
                 // "--data","coco128.yaml",
                 // "--weights","./models_files/yolov3-tiny.pt",
                 // voc
-                "--data", "./data/voc.yaml",
-                "--cfg", "models/yolov3-tiny_voc.yaml",
-                "--weights", "models_files/voc_retrain/weights/best.pt",
+                "--data",
+                "./data/voc.yaml",
+                "--cfg",
+                "models/yolov3-tiny_voc.yaml",
+                "--weights",
+                "models_files/voc_retrain/weights/best.pt",
             ]
         },
         {
@@ -139,13 +185,22 @@
             "program": "${workspaceFolder}/quant_train.py",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
-                "--batch-size", "16",
-                "--epochs", "50",
-                "--device","cpu",
-                "--data", "./data/voc.yaml",
-                "--cfg", "models/yolov3-tiny_voc.yaml",
-                "--weights", "models_files/voc_retrain/weights/best.pt",
+                "--img",
+                "416",
+                "--batch-size",
+                "16",
+                "--epochs",
+                "10",
+                "--device",
+                "0",
+                "--data",
+                "./data/voc.yaml",
+                "--cfg",
+                "models/yolov3-tiny_voc.yaml",
+                "--weights",
+                "models_files/voc_retrain/weights/best.pt",
+                "--hyp",
+                "data/hyp.finetune.yaml"
             ]
         },
         {
@@ -157,11 +212,10 @@
             "args": [
                 // "--model_name","coco128_retrain",
                 // "--data","./data/coco128.yaml"
-
-                "--source", "data/images",
-                "--cs_num", "20",
-
-
+                "--source",
+                "data/images",
+                "--cs_num",
+                "20",
             ]
         },
         {
@@ -171,13 +225,24 @@
             "program": "${workspaceFolder}/train_lite.py",
             "console": "integratedTerminal",
             "args": [
-                "--img","416",
-                "--batch-size", "16",
-                "--epochs", "200",
-                "--device","9",
-                "--data", "./data/voc.yaml",
-                "--cfg", "models/yolov3-tiny_voc.yaml",
-                "--weights", "./models_files/yolov3-tiny.pt",
+                "--img",
+                "416",
+                "--batch-size",
+                "16",
+                "--epochs",
+                "200",
+                "--device",
+                "9",
+                "--data",
+                "./data/voc.yaml",
+                "--cfg",
+                "models/yolov3-tiny_voc.yaml",
+                // initial
+                // "--weights", "./models_files/yolov3-tiny.pt",
+                // then
+                "--weights",
+                "runs/train/exp/weights/best.pt",
+                "--wap"
             ]
         }
     ]

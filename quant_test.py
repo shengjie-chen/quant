@@ -67,6 +67,7 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
         data = data.float()  # uint8 to fp16/32
         data /= 255.0  # 0 - 255 to 0.0 - 1.0
         target = target.to(device)
+        data = data.to(device)
         nb, _, height, width = data.shape  # batch size, channels, height, width
         z = []  # inference output
         with torch.no_grad():
@@ -83,11 +84,11 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
             # Compute loss
             if compute_loss:
                 # box, obj, cls
-                loss += compute_loss([x.float()
+                loss += compute_loss([x.float().to(device)
                                      for x in train_out], target)[1][:3]
 
             # Run NMS
-            target[:, 2:] *= torch.Tensor([width, height, width, height])
+            target[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)
             lb = []  # for autolabelling
             y_nms = non_max_suppression(
                 z, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=False, max_det=1000)
@@ -147,7 +148,7 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
                                     detected_set.add(d.item())
                                     detected.append(d)
                                     # iou_thres is 1xn
-                                    correct[pi[j]] = ious[j] > iouv
+                                    correct[pi[j]] = ious[j] > (iouv.to(device))
                                     if len(detected) == nl:  # all targets already located in image
                                         break
 
@@ -175,6 +176,8 @@ def quant_test(quant_model, dataloader, nc, iouv, niou, names, conf_thres, iou_t
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
+    parser.add_argument('--device', default='cpu',
+                        help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--model_name', type=str, default='voc_retrain',
                         help='which model? choose in voc_retrain | coco_origin | coco128_retrain ')
     parser.add_argument('--data', type=str,
@@ -196,7 +199,7 @@ if __name__ == '__main__':
                         help='if cs_self_def is true, use cs_dir as calibration source')
     parser.add_argument('--cs_use_set', type=str, default='val',
                         help='if cs_self_def is false, use dataset as calibration source, you can choose in val and train')
-    parser.add_argument('--cs_num', type=int, default=128,
+    parser.add_argument('--cs_num', type=int, default=2,
                         help='limit img number of calibration source')
 
     parser.add_argument('--quant_strategy', type=str, default='baseline',
@@ -205,9 +208,14 @@ if __name__ == '__main__':
                         help='save quanted weight')
 
     parser.add_argument('--quant_weight', type=str, default=None,
-                        help='choose one quant weight, and recon_qmodel must be false')       
+                        help='choose one quant weight, and recon_qmodel must be false')
     parser.add_argument('--float_weight', type=str, default=None,
-                        help='choose one float weight, and recon_qmodel must be true')                    
+                        help='choose one float weight, and recon_qmodel must be true')
+
+    parser.add_argument('--act_qmin', type=int, default=0,
+                        help='if quant_strategy is selfdefine, use to change quant config activation quant_min')
+    parser.add_argument('--act_qmax', type=int, default=127,
+                        help='if quant_strategy is selfdefine, use to change quant config activation quant_max')
     opt = parser.parse_args()
     # if('recon_qmodel' in vars(opt)):
     #     if('cs_self_def' in vars(opt)):
@@ -218,7 +226,7 @@ if __name__ == '__main__':
     warnings.filterwarnings('ignore')
 
     # Configure
-    device = 'cpu'
+    device = opt.device
     data_yaml = opt.data
     if isinstance(data_yaml, str):
         with open(data_yaml) as f:
@@ -240,8 +248,10 @@ if __name__ == '__main__':
 
     data = 'models/yolov3-tiny_voc.yaml' if model_name == 'voc_retrain' else 'models/yolov3-tiny.yaml'
     relative_path = './models_files/' + model_name
-    float_weight = relative_path + '/weights/best.pt' if opt.float_weight is None else opt.float_weight
-    quant_weight = relative_path + '/yolov3tiny_quant.pth' if opt.quant_weight is None else opt.quant_weight
+    float_weight = relative_path + \
+        '/weights/best.pt' if opt.float_weight is None else opt.float_weight
+    quant_weight = relative_path + \
+        '/yolov3tiny_quant.pth' if opt.quant_weight is None else opt.quant_weight
 
     assert (os.path.exists(float_weight))
     assert (os.path.exists(quant_weight))
@@ -268,7 +278,7 @@ if __name__ == '__main__':
         else:  # 使用自定义的量化策略，产生了量化模型
             print("->selfdefine量化策略：")
             quant_model = generate_quant_model_selfdefine(
-                float_model, calibrate_dataset, opt.cs_num)
+                float_model, calibrate_dataset, opt.cs_num, opt.act_qmin, opt.act_qmax)
     else:  # 加载保存好的量化模型
         # load model only in default_qconfig strategy
         quant_model = load_quant_model(float_weight, quant_weight)

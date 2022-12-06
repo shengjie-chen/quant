@@ -53,7 +53,7 @@ def train_one_epoch(opt, model, optimizer, device,
                     nw,  # 热身训练的迭代次数，至少1000
                     batch_size, nbs,  # nominal batch size 更新权重的bs
                     imgsz,
-                    scaler,  # 通过torch1.6自带的api设置混合精度训练
+                    # scaler,  # 通过torch1.6自带的api设置混合精度训练
                     plots, save_dir, compute_loss,  cuda, lf,
                     accumulate,
                     gs, mloss,
@@ -93,18 +93,20 @@ def train_one_epoch(opt, model, optimizer, device,
                     imgs, size=ns, mode='bilinear', align_corners=False)
 
         # Forward
-        with amp.autocast(enabled=cuda):
-            pred = model(imgs, quant=1)  # forward # 前向传播
-            # loss scaled by batch_size  # 计算损失，包括分类损失，objectness损失，框的回归损失  # loss为总损失值，loss_items为一个元组，包含分类损失，objectness损失，框的回归损失和总损失
-            loss, loss_items = compute_loss(pred, targets.to(device))
+        # with amp.autocast(enabled=False):
+        pred = model(imgs, quant=1)  # forward # 前向传播
+        # loss scaled by batch_size  # 计算损失，包括分类损失，objectness损失，框的回归损失  # loss为总损失值，loss_items为一个元组，包含分类损失，objectness损失，框的回归损失和总损失
+        loss, loss_items = compute_loss(pred, targets.to(device))
 
         # Backward 反向传播
-        scaler.scale(loss).backward()
+        # scaler.scale(loss).backward()
+        loss.backward()
 
         # Optimize 模型反向传播accumulate次之后再根据累积的梯度更新一次参数
         if ni % accumulate == 0:
-            scaler.step(optimizer)  # optimizer.step
-            scaler.update()
+            # scaler.step(optimizer)  # optimizer.step
+            # scaler.update()
+            optimizer.step()
             optimizer.zero_grad()
 
         # Print
@@ -121,7 +123,7 @@ def train_one_epoch(opt, model, optimizer, device,
             f = save_dir / f'train_batch{ni}.jpg'  # filename
             Thread(target=plot_images, args=(
                 imgs, targets, paths, f), daemon=True).start()
-            if tb_writer:
+            if tb_writer and device == 'cpu':
                 tb_writer.add_graph(torch.jit.trace(de_parallel(
                     model), imgs, strict=False), [])  # model graph
                 # tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
@@ -144,7 +146,7 @@ def train(hyp, opt, device, tb_writer=None):
     wdir = save_dir / 'weights'
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
     # last = wdir / 'last.pt'
-    # best = wdir / 'best.pt'    
+    # best = wdir / 'best.pt'
     last = wdir / 'quant_last.pth'
     best = wdir / 'quant_best.pth'
     quant_best = wdir / 'quant_best.pth'
@@ -221,7 +223,7 @@ def train(hyp, opt, device, tb_writer=None):
     float_model = model
 
     print("->selfdefine量化策略：")
-    model = generate_quant_model_selfdefine_train(float_model)
+    model = generate_quant_model_selfdefine_train(float_model).to(device)
 
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
@@ -313,7 +315,7 @@ def train(hyp, opt, device, tb_writer=None):
     # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
     results = (0, 0, 0, 0, 0, 0, 0)
     scheduler.last_epoch = start_epoch
-    scaler = amp.GradScaler(enabled=cuda)  # 通过torch1.6自带的api设置混合精度训练
+    # scaler = amp.GradScaler(enabled=False)  # 通过torch1.6自带的api设置混合精度训练
     compute_loss = ComputeLoss(model)  # init loss class
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
@@ -322,7 +324,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # epoch ------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):
-        model.train()
+        model.to(device).train()
 
         # Update mosaic border
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
@@ -337,7 +339,7 @@ def train(hyp, opt, device, tb_writer=None):
         optimizer.zero_grad()
         # batch -------------------------------------------------------------
         s, mloss = train_one_epoch(opt, model, optimizer, device, epoch, epochs, pbar, nb, nw, batch_size, nbs, imgsz,
-                                   scaler, plots, save_dir, compute_loss,  cuda, lf, accumulate, gs, mloss)
+                                   plots, save_dir, compute_loss,  cuda, lf, accumulate, gs, mloss)
 
         # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -351,32 +353,34 @@ def train(hyp, opt, device, tb_writer=None):
         final_epoch = epoch + 1 == epochs
         if not opt.notest or final_epoch:  # Calculate mAP  对测试集进行测试，计算mAP等指标 测试时使用的是EMA模型
             if opt.float_test:
-            # float test
+                # float test
                 results, maps, times = test.test(data_dict,
-                                                batch_size=batch_size * 2,
-                                                imgsz=imgsz_test,
-                                                model=model,
-                                                single_cls=opt.single_cls,
-                                                dataloader=testloader,
-                                                save_dir=save_dir,
-                                                save_json=is_coco and final_epoch,
-                                                verbose=nc < 50 and final_epoch,
-                                                plots=plots and final_epoch,
-                                                wandb_logger=None,
-                                                compute_loss=compute_loss,
-                                                is_coco=is_coco)
+                                                 batch_size=batch_size * 2,
+                                                 imgsz=imgsz_test,
+                                                 model=model,
+                                                 single_cls=opt.single_cls,
+                                                 dataloader=testloader,
+                                                 save_dir=save_dir,
+                                                 save_json=is_coco and final_epoch,
+                                                 verbose=nc < 50 and final_epoch,
+                                                 plots=plots and final_epoch,
+                                                 wandb_logger=None,
+                                                 compute_loss=compute_loss,
+                                                 is_coco=is_coco)
             else:
-            # quant test
+                # quant test
                 print("quant model test:")
                 opt.one_anchor = False
-                quant_model = model
+                quant_model = model.to(device)
                 quant_model.eval()
                 results = quant_test(quant_model, testloader, nc, iouv,
                                      niou, names, conf_thres, iou_thres, device, opt, compute_loss=compute_loss)
+
         # Write 将指标写入result.txt
         with open(results_file, 'a') as f:
             # append metrics, val_loss
             f.write(s + '%10.4g' * 7 % results + '\n')
+            # f.write('%10.4g' * 7 % results + '\n')
 
         # Log
         tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
@@ -408,8 +412,10 @@ def train(hyp, opt, device, tb_writer=None):
             # del ckpt
 
 # Save quant
-            quant_model = model 
-            quant_model = torch.quantization.convert(quant_model, inplace=False)
+            quant_model = model
+            quant_model.to('cpu').eval()
+            quant_model = torch.quantization.convert(
+                quant_model, inplace=False)
             state_dict = quant_model.state_dict()
 
             # Save last, best and delete
@@ -488,7 +494,7 @@ if __name__ == '__main__':
     # parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
     parser.add_argument('--workers', type=int, default=8,
                         help='maximum number of dataloader workers')
-    parser.add_argument('--project', default='runs/train',
+    parser.add_argument('--project', default='runs/quant_train',
                         help='save to project/name')
     # parser.add_argument('--entity', default=None, help='W&B entity')
     parser.add_argument('--name', default='exp', help='save to project/name')
@@ -500,7 +506,8 @@ if __name__ == '__main__':
     # parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     # parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     # parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
-    parser.add_argument('--float_test', action='store_true', help='验证测试使用float模型，默认使用的是量化模型')
+    parser.add_argument('--float_test', action='store_true',
+                        help='验证测试使用float模型，默认使用的是量化模型')
     opt = parser.parse_args()
     warnings.filterwarnings('ignore')
 

@@ -44,20 +44,28 @@ from models.common import Conv
 # from models.quant_yolo import attempt_load_quant
 
 per_channel_qconfig_1 = torch.quantization.QConfig(
-        activation=torch.quantization.default_histogram_observer,
-        weight=torch.quantization.default_per_channel_weight_observer)
+    activation=torch.quantization.default_histogram_observer,
+    weight=torch.quantization.default_per_channel_weight_observer)
 per_channel_qconfig_2 = torch.quantization.QConfig(
-        activation=torch.quantization.HistogramObserver.with_args(reduce_range=False),
-        weight=torch.quantization.default_per_channel_weight_observer)
+    activation=torch.quantization.HistogramObserver.with_args(
+        reduce_range=False),
+    weight=torch.quantization.default_per_channel_weight_observer)
 per_channel_qconfig_3 = torch.quantization.QConfig(
-        activation=torch.quantization.default_histogram_observer,
-        weight=torch.quantization.PerChannelMinMaxObserver.with_args(
-    dtype=torch.qint8, qscheme=torch.per_channel_affine))
+    activation=torch.quantization.default_histogram_observer,
+    weight=torch.quantization.PerChannelMinMaxObserver.with_args(
+        dtype=torch.qint8, qscheme=torch.per_channel_affine))
 per_channel_qconfig_4 = torch.quantization.QConfig(
-        activation=torch.quantization.HistogramObserver.with_args(quant_min=0, quant_max=191),
-        weight=torch.quantization.default_per_channel_weight_observer)
-
-
+    activation=torch.quantization.HistogramObserver.with_args(
+        quant_min=0, quant_max=191),
+    weight=torch.quantization.default_per_channel_weight_observer)
+per_channel_qconfig_best = torch.quantization.QConfig(
+    activation=torch.quantization.HistogramObserver.with_args(
+        quant_min=0, quant_max=255),
+    weight=torch.quantization.default_per_channel_weight_observer)
+per_channel_qconfig_minmax = torch.quantization.QConfig(
+    activation=torch.quantization.MinMaxObserver.with_args()
+    ,
+    weight=torch.quantization.default_per_channel_weight_observer)
 
 
 # def generate_quant_model_baseline(model, dataloader_iter, quant_model_name):
@@ -84,7 +92,7 @@ def generate_quant_model_baseline(model, dataloader_iter, cal_num=100):
     quant_model = nn.Sequential(quant, model, dequant)
     quant_model = quant_model.to('cpu')
     quant_model.qconfig = torch.quantization.default_qconfig
-    print("\t",end='')
+    print("\t", end='')
     print(quant_model.qconfig)
     quant_model = torch.quantization.prepare(quant_model, inplace=False)
     with torch.no_grad():
@@ -101,8 +109,7 @@ def generate_quant_model_baseline(model, dataloader_iter, cal_num=100):
     return quant_model
 
 
-
-def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=100):
+def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=2, act_qmin=0, act_qmax=255):
     """指定量化策略来产生一个量化模型,使用自定义的量化策略"""
     # quant = torch.quantization.QuantStub()
     # dequant = torch.quantization.DeQuantStub()
@@ -118,8 +125,11 @@ def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=100):
     # my_qconfig = torch.quantization.QConfig(activation=torch.quantization.MinMaxObserver.with_args(dtype=torch.qint8),
     #   weight=torch.quantization.default_observer.with_args(dtype=torch.qint8))
 
-    quant_model.qconfig = per_channel_qconfig_4
-    print("\t",end='')
+    quant_model.qconfig = torch.quantization.QConfig(
+        activation=torch.quantization.HistogramObserver.with_args(
+            quant_min=act_qmin, quant_max=act_qmax),
+        weight=torch.quantization.default_per_channel_weight_observer)
+    print("\t", end='')
     print(quant_model.qconfig)
     quant_model = torch.quantization.prepare(quant_model, inplace=False)
     with torch.no_grad():
@@ -131,7 +141,7 @@ def generate_quant_model_selfdefine(model, dataloader_iter, cal_num=100):
             img /= 255.0  # 0 - 255 to 0.0 - 1.0
             if img.ndimension() == 3:
                 img = img.unsqueeze(0)
-            quant_model(img,quant=2)
+            quant_model(img, quant=2)
     quant_model = torch.quantization.convert(quant_model, inplace=False)
     return quant_model
 
@@ -145,17 +155,60 @@ def generate_quant_model_selfdefine_train(model):
     quant_model = model
     modules_to_fuse = ['conv', 'bn']
     for i, w in enumerate(quant_model.model):
-        if isinstance(w,Conv):
+        if isinstance(w, Conv):
             quant_model.model[i] = torch.ao.quantization.fuse_modules_qat(
-            quant_model.model[i], modules_to_fuse)
+                quant_model.model[i], modules_to_fuse)
     quant_model = quant_model.to('cpu')
     quant_model.train()
-    quant_model.qconfig = per_channel_qconfig_4
+    quant_model.qconfig = per_channel_qconfig_best
     print("\t", end='')
     print(quant_model.qconfig)
     quant_model = torch.quantization.prepare_qat(quant_model, inplace=False)
     return quant_model
 
+def load_quant_model(float_model_name, quant_model_name):
+    model = attempt_load(float_model_name, map_location='cpu', inplace=False)
+    if not hasattr(model, 'quant'):
+        model.quant = torch.quantization.QuantStub()
+    if not hasattr(model.model[-1], 'dequant'):
+        model.model[-1].dequant = torch.quantization.DeQuantStub()
+    quant_model = model
+
+    quant_model = quant_model.to('cpu')
+    # quant_model.qconfig = torch.quantization.default_qconfig
+    quant_model.qconfig = per_channel_qconfig_best
+    quant_model = torch.quantization.prepare(quant_model, inplace=False)
+    quant_model = torch.quantization.convert(quant_model, inplace=False)
+
+    state_dict_t = torch.load(quant_model_name)
+    quant_model.load_state_dict(state_dict_t)
+    quant_model = quant_model.to('cpu')
+    return quant_model
+
+
+def load_float_model(weights):
+    """加载浮点模型"""
+    model = attempt_load(weights, map_location='cpu', inplace=False)
+    return model
+
+
+def load_model_data(data, weights, imgsz, rect):
+    """加载浮点模型以及生成数据加载器"""
+    # data='kaggle-facemask.yaml'
+    # weights='yolov3tiny_facemask.pt'
+    # imgsz=640
+    with open(data) as f:
+        data = yaml.safe_load(f)
+    check_dataset(data)
+    nc = int(data['nc'])
+    model = attempt_load(weights, map_location='cpu', inplace=False)
+    gs = max(int(model.stride.max()), 32)  # grid size (max stride)
+    imgsz = check_img_size(imgsz, s=gs)  # check img_size
+    task = 'val'
+    dataloader = create_dataloader(
+        data[task], imgsz, 1, gs, False, pad=0.5, rect=rect, prefix=colorstr(f'{task}: '))[0]
+    dataloader_iter = iter(dataloader)
+    return model, dataloader_iter
 
 
 def quant_zeropad2d(x):
@@ -168,20 +221,22 @@ def quant_zeropad2d(x):
     x_type = x.dtype
     x = x.dequantize()
     bs = x.shape[0]
-    ch = x.shape[1] 
+    ch = x.shape[1]
     h = x.shape[2]
     # print(x)
     p = torch.zeros(bs*ch*h)
-    p = p.reshape(bs,ch,h,1)
-    x = torch.cat((x,p),3)
+    p = p.reshape(bs, ch, h, 1)
+    x = torch.cat((x, p), 3)
     w = x.shape[3]
     p = torch.zeros(bs*ch*w)
-    p = p.reshape(bs,ch,1,w)
-    x = torch.cat((x,p),2)
-    x = torch.quantize_per_tensor(x, scale = x_scale, zero_point = x_zq, dtype=x_type)
+    p = p.reshape(bs, ch, 1, w)
+    x = torch.cat((x, p), 2)
+    x = torch.quantize_per_tensor(
+        x, scale=x_scale, zero_point=x_zq, dtype=x_type)
     return x
 
-def quant_cat(x,y):
+
+def quant_cat(x, y):
     """
     实现cat(),将两个量化的tensor在channel方向上拼接，量化权重使用第一个的
     输入的tensor.size()为：[bs,channel,h,w]
@@ -194,16 +249,18 @@ def quant_cat(x,y):
     # y_type = y.dtype
     x = x.dequantize()
     y = y.dequantize()
-    assert(x.shape[0] == y.shape[0])
-    assert(x.shape[2] == y.shape[2])
-    assert(x.shape[3] == y.shape[3])
+    assert (x.shape[0] == y.shape[0])
+    assert (x.shape[2] == y.shape[2])
+    assert (x.shape[3] == y.shape[3])
     # bs = x.shape[0]
-    # ch = x.shape[1] 
+    # ch = x.shape[1]
     # h = x.shape[2]
     # w = x.shape[3]
-    x = torch.cat((x,y),1)
-    x = torch.quantize_per_tensor(x, scale = x_scale, zero_point = x_zq, dtype=x_type)
+    x = torch.cat((x, y), 1)
+    x = torch.quantize_per_tensor(
+        x, scale=x_scale, zero_point=x_zq, dtype=x_type)
     return x
+
 
 def quant_model_detect_v3t1ancher(x, quant_model):
     """针对yolov3-tiny,使用量化模型进行推理检测,但是只使用一个anchor"""
@@ -216,9 +273,10 @@ def quant_model_detect_v3t1ancher(x, quant_model):
     x = quant_model[1].model[-1].m[1](x)
     return x
 
+
 def quant_model_detect_v3tall(x, quant_model):
     """针对yolov3-tiny,使用量化模型进行推理检测,使用全部anchor"""
-    x = quant_model(x,quant=1)
+    x = quant_model(x, quant=1)
     return x
     # print(quant_model)
 
@@ -239,12 +297,12 @@ def quant_model_detect_v3tall(x, quant_model):
     x3 = quant_model[1].model[16](x3)
     x3 = quant_model[1].model[17](x3)
     # print("before cat:\n\tx3.scale:%f\tx3.zeropoint:%f\n\tx2.scale:%f\tx2.zeropoint:%f"%(x3.q_scale(),x3.q_zero_point(),x2.q_scale(),x2.q_zero_point()))
-    x3 = quant_model[1].model[18]([x3,x2])
+    x3 = quant_model[1].model[18]([x3, x2])
     # x3 = quant_cat(x3,x2)
     # print("after cat:\n\tx3.scale:%f\tx3.zeropoint:%f"%(x3.q_scale(),x3.q_zero_point()))
     x3 = quant_model[1].model[19](x3)
     x2 = quant_model[1].model[-1].m[0](x3)
-    return [x2,x1]
+    return [x2, x1]
 
 # def quant_inference_batch(x,quant_model):
 #     """使用量化模型对一个batchsize的图片进行推理"""
@@ -256,7 +314,8 @@ def quant_model_detect_v3tall(x, quant_model):
 #     z = torch.tensor(y)
 #     return z
 
-def statistics_per_img(out, targets, paths, seen, stats, niou, img, shapes, device,iouv):
+
+def statistics_per_img(out, targets, paths, seen, stats, niou, img, shapes, device, iouv):
     """对网络结果进行统计"""
     for si, pred in enumerate(out):
         labels = targets[targets[:, 0] == si, 1:]
@@ -317,7 +376,6 @@ def statistics_per_img(out, targets, paths, seen, stats, niou, img, shapes, devi
     return stats
 
 
-
 def quant_model_evaluate_show_name(data, quant_model, im0s, names):
     """量化模型检测图片并展示类别结果"""
     na = quant_model[1].model[-1].na
@@ -330,7 +388,7 @@ def quant_model_evaluate_show_name(data, quant_model, im0s, names):
     x = data
     height = im0s.shape[0]
     width = im0s.shape[1]
-    while(height > 1000 or width > 1500):
+    while (height > 1000 or width > 1500):
         height = int(height / 2)
         width = int(width / 2)
     res = quant_model_detect_v3t1ancher(x, quant_model)
@@ -410,53 +468,11 @@ def quant_model_evaluate_show(data, quant_model):
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
+
 def print_size_of_model(model):
     torch.save(model.state_dict(), "temp.p")
     print('Size (MB):', os.path.getsize("temp.p")/1e6)
     os.remove('temp.p')
-
-def load_quant_model(float_model_name, quant_model_name):
-    model = attempt_load(float_model_name, map_location='cpu',inplace=False)
-    if not hasattr(model, 'quant'):
-        model.quant = torch.quantization.QuantStub()
-    if not hasattr(model.model[-1], 'dequant'):
-        model.model[-1].dequant = torch.quantization.DeQuantStub()
-    quant_model = model 
-
-    quant_model = quant_model.to('cpu')
-    # quant_model.qconfig = torch.quantization.default_qconfig
-    quant_model.qconfig = per_channel_qconfig_4
-    quant_model = torch.quantization.prepare(quant_model, inplace=False)
-    quant_model = torch.quantization.convert(quant_model, inplace=False)
-
-    state_dict_t = torch.load(quant_model_name)
-    quant_model.load_state_dict(state_dict_t)
-    quant_model = quant_model.to('cpu')
-    return quant_model
-
-def load_float_model(weights):
-    """加载浮点模型"""
-    model = attempt_load(weights, map_location='cpu',inplace=False)
-    return model
-
-def load_model_data(data, weights, imgsz, rect):
-    """加载浮点模型以及生成数据加载器"""
-    # data='kaggle-facemask.yaml'
-    # weights='yolov3tiny_facemask.pt'
-    # imgsz=640
-    with open(data) as f:
-        data = yaml.safe_load(f)
-    check_dataset(data)
-    nc = int(data['nc'])
-    model = attempt_load(weights, map_location='cpu',inplace=False)
-    gs = max(int(model.stride.max()), 32)  # grid size (max stride)
-    imgsz = check_img_size(imgsz, s=gs)  # check img_size
-    task = 'val'
-    dataloader = create_dataloader(
-        data[task], imgsz, 1, gs, False, pad=0.5, rect=rect, prefix=colorstr(f'{task}: '))[0]
-    dataloader_iter = iter(dataloader)
-    return model, dataloader_iter
-
 
 def generate_para_list(quant_model, index):
     cscale = quant_model.state_dict(
@@ -684,7 +700,7 @@ def yolov3tiny_infer_para_gen(quant_model, ofmch_t, first_chr, rp, model_name):
         b, scale=bscale, zero_point=0, dtype=torch.qint32).int_repr().numpy().astype(np.int64)
     # zero=np.zeros([3]).astype(np.int64)
     # bias=np.concatenate((bias[0:85],zero,bias[85:170],zero,bias[170:256],zero))
-    if(model_name == 'voc_retrain'):
+    if (model_name == 'voc_retrain'):
         index_bias = [24, 49, 74]
         bias = np.delete(bias, index_bias)
         index_w = [24, 49, 74]
@@ -774,6 +790,7 @@ def model_quant_save(dataset, float_model, quant_model_files):
 def _make_grid(nx=20, ny=20):
     yv, xv = torch.meshgrid([torch.arange(ny), torch.arange(nx)])
     return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
+
 
 def yolo_func(yolo_in, nc, anchors, stride):
     no = nc + 5  # number of outputs per anchor
