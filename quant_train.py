@@ -37,6 +37,8 @@ from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 import warnings
+import copy
+from models.common import Conv
 
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -352,7 +354,7 @@ def train(hyp, opt, device, tb_writer=None):
         # mAP # 更新EMA的属性  添加include的属性
         final_epoch = epoch + 1 == epochs
         if not opt.notest or final_epoch:  # Calculate mAP  对测试集进行测试，计算mAP等指标 测试时使用的是EMA模型
-            if opt.float_test:
+            if opt.test_model == 2:
                 # float test
                 results, maps, times = test.test(data_dict,
                                                  batch_size=batch_size * 2,
@@ -367,9 +369,25 @@ def train(hyp, opt, device, tb_writer=None):
                                                  wandb_logger=None,
                                                  compute_loss=compute_loss,
                                                  is_coco=is_coco)
-            else:
+            elif opt.test_model == 1:
                 # quant test
-                print("quant model test:")
+                print("ptq quant model test:")
+                opt.one_anchor = False
+                device_temp = opt.device
+                opt.device = 'cpu'
+                quant_model = copy.deepcopy(model).to('cpu').eval()
+                quant_model = torch.quantization.convert(
+                    quant_model, inplace=False)
+                for m in range(len(quant_model.model)):
+                    if isinstance(quant_model.model[m], Conv):
+                        quant_model.model[m].act.inplace = False
+
+                results = quant_test(quant_model, testloader, nc, iouv,
+                                     niou, names, conf_thres, iou_thres, 'cpu', opt, compute_loss=None)
+                opt.device = device_temp
+            else: 
+                # quant test
+                print("qat quant model test:")
                 opt.one_anchor = False
                 quant_model = model.to(device)
                 quant_model.eval()
@@ -412,10 +430,10 @@ def train(hyp, opt, device, tb_writer=None):
             # del ckpt
 
 # Save quant
-            quant_model = model
-            quant_model.to('cpu').eval()
-            quant_model = torch.quantization.convert(
-                quant_model, inplace=False)
+            if opt.test_model == 0:
+                quant_model = copy.deepcopy(model).to('cpu').eval()
+                quant_model = torch.quantization.convert(
+                    quant_model, inplace=False)
             state_dict = quant_model.state_dict()
 
             # Save last, best and delete
@@ -506,8 +524,8 @@ if __name__ == '__main__':
     # parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     # parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     # parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
-    parser.add_argument('--float_test', action='store_true',
-                        help='验证测试使用float模型，默认使用的是量化模型')
+    parser.add_argument('--test_model', type=int, default=0,
+                        help='值为2验证测试使用float模型，默认0使用的是qat量化模型，1使用ptq量化模型')
     opt = parser.parse_args()
     warnings.filterwarnings('ignore')
 

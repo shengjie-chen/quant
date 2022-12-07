@@ -158,7 +158,19 @@ class Model(nn.Module):
                     logger.info(f"{'time (ms)':>10s} {'GFLOPS':>10s} {'params':>10s}  {'module'}")
                 logger.info(f'{dt[-1]:10.2f} {o:10.2f} {m.np:10.0f}  {m.type}')
 
-            x = m(x)  # run
+            # x = m(x)  # run
+
+            # 因为pytorch1.12都不支持量化的zeropad，1.13在当前的cuda上装不了，所以暂时用下面的部分
+            # 如果使用1.13的cpu版本就可以使用上面的一行代码
+            if isinstance(x,torch.Tensor) and x.dtype is quint8:
+                if isinstance(m, nn.ZeroPad2d):
+                    x = quant_zeropad2d(x)
+                else:
+                    x = m(x)
+            else:
+                x = m(x)
+
+
             y.append(x if m.i in self.save else None)  # save output
 
         if profile:
